@@ -11,7 +11,7 @@ import {
   updateKpisFromShortlist,
   injectReportStylesOnce
 } from "./render-report.js";
-import { deepDiveQueries, runDeepDiveAgent } from "./agents/deep-dive.js";
+import { runDeepDiveAgent } from "./agents/deep-dive.js";
 import { hybridResearchSearch, researchModel } from "./search/native-search.js";
 
 let abortCtrl = null;
@@ -371,48 +371,27 @@ export async function runDeepDive(tickerRaw) {
       });
     }
 
+    // Option C: agent owns web tools (dynamic queries + reasoning). No pre-fetch Jina.
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
-    setStatus(`Deep dive ${ticker}: search…`, "busy");
-
-    let searchResults = [];
-    let searchModeEffective = searchMode;
-    if (searchMode !== "DEGRADED") {
-      const queries = deepDiveQueries(ticker, marketPack.day);
-      // Deep dive: unrestricted web for native tools (full internet, not only 5 domains)
-      let pageContents = [];
-      const hybrid = await hybridResearchSearch({
-        model: researchModel(),
-        queries,
-        searchMode: searchMode === "auto" ? "FULL" : searchMode,
-        signal,
-        onLog: logLine,
-        unrestrictedWeb: true,
-        fetchPages: true,
-        fetchLimit: 4
-      });
-      searchResults = hybrid.results;
-      pageContents = hybrid.pages || [];
-      searchModeEffective = hybrid.searchModeEffective || searchMode;
-      logLine(
-        `Deep search hits: ${searchResults.length} pages=${pageContents.length} layer=${hybrid.layer || "—"} effective=${searchModeEffective}`
-      );
-      // stash for agent
-      marketPack._pageContents = pageContents;
-    } else {
+    if (searchMode === "DEGRADED") {
       logLine("DEGRADED — deep dive tanpa search live", "warn");
+    } else if (searchMode === "FULL") {
+      logLine("Deep dive FULL — agentic native tools (model pilih query sendiri)");
+    } else {
+      logLine("Deep dive FALLBACK — pack search seed, tanpa page fetch");
     }
 
     const memRes = await fetch("/api/memory/compact?n=8", { signal });
     const memJson = memRes.ok ? await memRes.json() : { items: [] };
 
-    setStatus(`Deep dive ${ticker}: AI…`, "busy");
+    setStatus(`Deep dive ${ticker}: agentic AI…`, "busy");
     const report = await runDeepDiveAgent({
       ticker,
       marketPack,
-      searchResults,
-      pageContents: marketPack._pageContents || [],
-      searchMode: searchModeEffective,
+      searchResults: [],
+      pageContents: [],
+      searchMode,
       memory: memJson.items || [],
       runId,
       signal,

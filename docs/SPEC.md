@@ -24,6 +24,14 @@
 - Key: `JINA_API_KEY` in gitignored `.env`, optional UI override `jinaApiKey`
 - 9Router `/v1/search` + `/v1/web/fetch` intentionally **not** used  
 
+## Deep dive — Option C (agentic)
+- **No** pre-scrape Jina page fetch for deep dive.
+- FULL: multi-round agentic loop (`frontend/js/search/agentic-web.js`) with native `web_search` / `google_search` + reasoning params cascade.
+- Model **chooses queries dynamically** from hard price/context anomalies (not fixed 8-query list).
+- Prefer Research model with tools (Grok/Gemini); reasoning effort auto high/medium when model looks reasoning.
+- FALLBACK/failure: seed queries + Jina/news pack → `chatJson` synthesize (still no page fetch).  
+
+
 
 ## Success metrics
 - Metrics in JSON match code source  

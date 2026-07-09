@@ -23,10 +23,10 @@ export function detectSearchMode() {
 
 export function searchModeBanner(mode) {
   if (mode === "FULL") {
-    return "Web: FULL — 9Router /v1/search (+ fetch) → news RSS → native tools if sparse";
+    return "Web: FULL — native tools (web_search/google_search) dulu → Jina search → news RSS. Deep dive = agentic + reasoning (query dinamis, no page-fetch).";
   }
   if (mode === "FALLBACK") {
-    return "Web: FALLBACK — 9Router search if available, else free Google News RSS";
+    return "Web: FALLBACK — Jina search + Google News RSS (tanpa native tools).";
   }
   return "Web: DEGRADED — no live search. Jangan mengarang katalis berita.";
 }

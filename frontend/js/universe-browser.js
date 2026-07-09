@@ -86,7 +86,7 @@ export function renderUniverseBrowser() {
         </tbody>
       </table>
     </div>
-    <p class="fineprint univ-hint">Klik Deep dive untuk riset intensif (native web search bila model support + fallback news).</p>
+    <p class="fineprint univ-hint">Deep dive agentic: model pilih query sendiri lewat web tools + reasoning (FULL). Fallback news jika native gagal.</p>
   `;
 
   $("universe-filter")?.addEventListener("input", (e) => {

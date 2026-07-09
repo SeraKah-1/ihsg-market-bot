@@ -14,6 +14,7 @@
  */
 import { resolveProviderCredentials, getProxyUrl, extractJson, modelFor } from "../ai.js";
 import { appSettings, loadSettings } from "../state.js";
+import { injectReasoningParams } from "./reasoning.js";
 
 /** IDX / ID finance domains — xAI allows max 5 allowed_domains */
 export const IDX_SEARCH_DOMAINS = [
@@ -69,8 +70,9 @@ export function modelSupportsNativeSearch(model) {
 }
 
 /**
- * Run one-shot research prompt with native web search tools.
- * Returns { content, citations[], toolTraces[], mode, raw }
+ * Run research prompt with native web search tools (server-side).
+ * Supports optional reasoningEffort (injected best-effort into body).
+ * Returns { content, citations[], toolTraces[], mode, raw, reasoning? }
  */
 export async function chatWithNativeWebSearch({
   model,
@@ -79,7 +81,8 @@ export async function chatWithNativeWebSearch({
   signal = null,
   temperature = 0.3,
   isJson = false,
-  unrestrictedWeb = false
+  unrestrictedWeb = false,
+  reasoningEffort = null
 }) {
   loadSettings();
   const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
@@ -101,20 +104,22 @@ export async function chatWithNativeWebSearch({
   try {
     const base = endpoint.replace(/\/+$/, "");
     let url = base.endsWith("/v1") ? `${base}/responses` : `${base}/v1/responses`;
-    // if base already is .../v1/something odd, still try /responses sibling
     if (useProxy) url = getProxyUrl(url);
 
     const input = [
       { role: "system", content: system },
       { role: "user", content: user }
     ];
-    const body = {
+    const body = injectReasoningParams(
+      {
+        model,
+        input,
+        tools,
+        temperature
+      },
       model,
-      input,
-      tools,
-      temperature
-    };
-    // some gateways use messages instead of input
+      reasoningEffort
+    );
     const res = await fetch(url, {
       method: "POST",
       headers,
@@ -125,7 +130,25 @@ export async function chatWithNativeWebSearch({
       const data = await res.json();
       const parsed = parseResponsesApi(data, isJson);
       if (parsed.content) {
-        return { ...parsed, mode: "NATIVE_RESPONSES", toolKind: toolCfg.kind };
+        return {
+          ...parsed,
+          mode: "NATIVE_RESPONSES",
+          toolKind: toolCfg.kind,
+          reasoningEffort
+        };
+      }
+    } else {
+      const t = await res.text();
+      // bubble thinking errors so cascade can retry
+      if (res.status >= 400 && /thinking|reasoning/i.test(t)) {
+        return {
+          content: "",
+          citations: [],
+          toolTraces: [],
+          mode: "NATIVE_FAILED",
+          error: `responses ${res.status}: ${t.slice(0, 240)}`,
+          toolKind: toolCfg.kind
+        };
       }
     }
   } catch {
@@ -136,16 +159,20 @@ export async function chatWithNativeWebSearch({
   try {
     let url = `${endpoint}/chat/completions`;
     if (useProxy) url = getProxyUrl(url);
-    const body = {
+    const body = injectReasoningParams(
+      {
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user }
+        ],
+        temperature,
+        tools,
+        tool_choice: "auto"
+      },
       model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ],
-      temperature,
-      tools,
-      tool_choice: "auto"
-    };
+      reasoningEffort
+    );
     if (isJson) body.response_format = { type: "json_object" };
 
     const res = await fetch(url, {
@@ -167,13 +194,19 @@ export async function chatWithNativeWebSearch({
     }
     if (isJson) content = extractJson(content);
     const citations = extractCitations(data);
+    const reasoning =
+      data.choices?.[0]?.message?.reasoning_content ||
+      data.choices?.[0]?.message?.reasoning ||
+      "";
     return {
       content,
       citations,
       toolTraces: extractToolTraces(data),
       mode: "NATIVE_CHAT",
       toolKind: toolCfg.kind,
-      raw: data
+      raw: data,
+      reasoning,
+      reasoningEffort
     };
   } catch (e) {
     return {
