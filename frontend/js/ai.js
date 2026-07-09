@@ -1,23 +1,20 @@
 /**
  * Slim custom-router client (OpenAI-compatible). Personal use.
- * Reasoning cascade + non-zero temperature defaults.
+ * Reasoning cascade; temperature always OMITTED.
  */
 import { appSettings, loadSettings } from "./state.js";
 import {
   injectReasoningParams,
   preferredReasoningEffort,
   reasoningEffortCascade,
-  shouldDropReasoningLevel,
-  resolveTemperature,
-  shouldDropTemperature
+  shouldDropReasoningLevel
 } from "./search/reasoning.js";
 
 loadSettings();
 
-/** Default creative temp for analysis agents — never freeze at 0 */
-export const DEFAULT_TEMP = 0.65;
-/** Slightly lower for repair-only JSON fix (still not 0) */
-export const REPAIR_TEMP = 0.2;
+/** @deprecated always omit temperature — kept for call-site compat */
+export const DEFAULT_TEMP = null;
+export const REPAIR_TEMP = null;
 
 function normalizeEndpoint(endpoint) {
   if (!endpoint) return "";
@@ -199,9 +196,10 @@ async function chatCompleteOnce({
   messages,
   isJson = false,
   signal = null,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = null
 }) {
+  void _temperature; // product: never send temperature
   const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
   let targetUrl = `${endpoint}/chat/completions`;
   if (useProxy) targetUrl = getProxyUrl(targetUrl);
@@ -211,10 +209,6 @@ async function chatCompleteOnce({
     messages,
     stream: false
   };
-  const temp = resolveTemperature(model, temperature == null ? DEFAULT_TEMP : temperature, {
-    tools: false
-  });
-  if (temp != null) body.temperature = temp;
   if (isJson) body.response_format = { type: "json_object" };
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
 
@@ -257,50 +251,31 @@ export async function chatComplete({
   messages,
   isJson = false,
   signal = null,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = "auto",
   onLog = null
 }) {
+  void _temperature;
   const preferred = preferredReasoningEffort(model, reasoningEffort);
   const efforts = reasoningEffortCascade(preferred ?? "high");
   let lastErr = null;
-  let temp = temperature == null ? DEFAULT_TEMP : temperature;
-  let triedOmitTemp = false;
 
   for (const effort of efforts) {
     try {
       onLog?.(
-        `chatComplete model=${model} temp=${temp == null ? "omit" : temp} reason=${effort || "off"}`
+        `chatComplete model=${model} temp=omit reason=${effort || "off"}`
       );
       return await chatCompleteOnce({
         model,
         messages,
         isJson,
         signal,
-        temperature: temp,
+        temperature: null,
         reasoningEffort: effort
       });
     } catch (e) {
       lastErr = e;
       if (signal?.aborted) throw e;
-      if (!triedOmitTemp && shouldDropTemperature(e)) {
-        onLog?.("temperature ditolak → omit, retry");
-        temp = null;
-        triedOmitTemp = true;
-        // retry same effort without temp
-        try {
-          return await chatCompleteOnce({
-            model,
-            messages,
-            isJson,
-            signal,
-            temperature: null,
-            reasoningEffort: effort
-          });
-        } catch (e2) {
-          lastErr = e2;
-        }
-      }
       if (shouldDropReasoningLevel(e) && effort) {
         onLog?.(`reason=${effort} ditolak → turun cascade: ${String(e.message || e).slice(0, 120)}`);
         continue;
@@ -319,10 +294,11 @@ export async function chatJson({
   system,
   user,
   signal,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = "auto",
   onLog = null
 }) {
+  void _temperature;
   const messages = [
     {
       role: "system",
@@ -337,7 +313,7 @@ export async function chatJson({
     messages,
     isJson: true,
     signal,
-    temperature,
+    temperature: null,
     reasoningEffort,
     onLog
   });
@@ -346,7 +322,6 @@ export async function chatJson({
     parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: used };
     return parsed;
   } catch (e) {
-    // one repair attempt — low but non-zero temp
     const repair = await chatComplete({
       model,
       messages: [
@@ -355,7 +330,7 @@ export async function chatJson({
       ],
       isJson: true,
       signal,
-      temperature: REPAIR_TEMP,
+      temperature: null,
       reasoningEffort: "off",
       onLog
     });

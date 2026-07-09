@@ -124,7 +124,7 @@
               <select id="model-verify" class="model-select"></select>
             </label>
             <p class="fineprint" style="text-align:left;margin-top:0.5rem">
-              3 agent: Researcher (web hunt) → Analysis (briefing) → Verify (skeptis + klarifikasi). Reasoning cascade + temp ~0.65.
+              3 agent: Researcher (web hunt) → Analysis (briefing) → Verify (skeptis + klarifikasi). Reasoning cascade; temperature always omit.
             </p>
           </div>
         </details>
@@ -163,7 +163,7 @@
               </select>
             </label>
             <p class="fineprint" style="text-align:left;margin:0.35rem 0 0">
-              Native = <b>POST /v1/responses</b> + <code>web_search</code> + <b>reasoning cascade</b> (high→med→low→off) + <b>temp 0.65</b>. Custom router endpoint/key. Gagal → Jina → news RSS.
+              Native = <b>POST /v1/responses</b> + <code>web_search</code> + <b>reasoning cascade</b> (high→med→low→off). <b>Temperature selalu di-omit</b>. Custom router endpoint/key. Gagal → Jina → news RSS.
             </p>
             <label class="check">
               <input id="force-refresh" type="checkbox" />
@@ -176,7 +176,7 @@
           <summary class="acc-sum"><span>Deep dive</span><span class="acc-hint">1 emiten</span></summary>
           <div class="acc-body">
             <p class="fineprint" style="text-align:left;margin:0 0 0.5rem">
-              Agentic deep dive: multi-round native <code>web_search</code> + reasoning + temp 0.65. Fallback Jina/news jika native gagal.
+              Agentic deep dive: multi-round native <code>web_search</code> + reasoning; temperature omit. Fallback Jina/news jika native gagal.
             </p>
             <label class="field">
               <span class="field-label">Kode emiten</span>

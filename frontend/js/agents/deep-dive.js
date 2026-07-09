@@ -3,7 +3,7 @@
  * Agentic native web tools + reasoning (model milih query sendiri).
  * Fallback: news/Jina search pack + chatJson tanpa tools (no page fetch).
  */
-import { chatJson, modelFor, parseJsonLoose, salvageFindingsFromText, DEFAULT_TEMP } from "../ai.js";
+import { chatJson, modelFor, parseJsonLoose, salvageFindingsFromText } from "../ai.js";
 import { GLOBAL_RULES } from "./constitution.js";
 import { modelSupportsNativeSearch } from "../search/native-search.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
@@ -299,7 +299,7 @@ export async function runDeepDiveAgent({
       onLog,
       maxRounds: 3,
       unrestrictedWeb: true,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       finalSchemaHint: "Schema deep_dive (JSON):\n" + schema
     });
@@ -455,7 +455,7 @@ export async function runDeepDiveAgent({
         ticker +
         ". Cari needle dari searchResults. Bahasa chat, tajam, bukan formal. Jangan kosongkan section tanpa unexplained.",
       signal,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       onLog
     });

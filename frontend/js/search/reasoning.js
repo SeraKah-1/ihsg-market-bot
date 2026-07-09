@@ -139,22 +139,14 @@ export function modelOmitsTemperature(model) {
 }
 
 /**
- * Resolve temperature for request body.
- * - null → omit field (reasoning models / docs-minimal tool calls)
- * - Gemini + search tools → 1.0 (Google grounding guidance)
- * - else preferred (default product 0.65)
+ * Product policy: ALWAYS omit temperature (all models / tools / chat).
+ * Gateway default sampling only. `preferred` ignored.
  */
-export function resolveTemperature(model, preferred = 0.65, { tools = false } = {}) {
-  // explicit omit (null / "omit") always wins — cascade after gateway reject
-  if (preferred === "omit" || preferred === false || preferred == null) return null;
-  if (modelOmitsTemperature(model)) return null;
-  const m = String(model || "").toLowerCase();
-  // Gemini grounding docs: temperature 1.0 ideal with Google Search
-  if (tools && (m.includes("gemini") || m.includes("google/"))) {
-    return 1.0;
-  }
-  const n = Number(preferred);
-  return Number.isFinite(n) ? n : 0.65;
+export function resolveTemperature(_model, _preferred = null, _opts = {}) {
+  void _model;
+  void _preferred;
+  void _opts;
+  return null;
 }
 
 /** API rejected temperature — retry without it */

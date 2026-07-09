@@ -1,7 +1,7 @@
 /**
  * Analysis agent — single brain full briefing (replaces Fear + Positive + Judge).
  */
-import { chatJson, modelFor, DEFAULT_TEMP } from "../ai.js";
+import { chatJson, modelFor } from "../ai.js";
 import { analysisSystem } from "./constitution.js";
 import { applyStanceToBriefing } from "./stance-rules.js";
 import {
@@ -92,7 +92,7 @@ export async function runAnalysis({
   onLog
 }) {
   const model = modelFor("analysis");
-  onLog?.(`Analysis model=${model} · reason cascade · temp=${DEFAULT_TEMP}`);
+  onLog?.(`Analysis model=${model} · reason cascade · temp=omit`);
 
   const schema = briefingSchema(runId, shortlistPack.day, searchMode);
   let briefing;
@@ -136,7 +136,7 @@ export async function runAnalysis({
         2
       ),
       signal,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       onLog
     });

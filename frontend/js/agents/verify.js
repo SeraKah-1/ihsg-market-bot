@@ -1,7 +1,7 @@
 /**
  * Verify agent — pragmatic skeptic, optional web_search for clarification.
  */
-import { chatJson, modelFor, parseJsonLoose, DEFAULT_TEMP } from "../ai.js";
+import { chatJson, modelFor, parseJsonLoose } from "../ai.js";
 import { verifySystem } from "./constitution.js";
 import { chatWithNativeWebSearch, modelSupportsNativeSearch } from "../search/native-search.js";
 import {
@@ -48,7 +48,7 @@ Search max 3 query paling kritis. Jangan overhate.`,
       signal,
       isJson: true,
       unrestrictedWeb: true,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       onLog
     });
@@ -114,7 +114,7 @@ Jangan overhate: kalau analysis greget dan evidence oke, bilang "lolos" di note.
         2
       ),
       signal,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       onLog
     });

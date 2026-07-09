@@ -1,8 +1,8 @@
 /**
  * Agentic native web research — multi-round Responses API web_search.
- * Reasoning cascade + temperature per round.
+ * Reasoning cascade; temperature always omitted.
  */
-import { parseJsonLoose, DEFAULT_TEMP } from "../ai.js";
+import { parseJsonLoose } from "../ai.js";
 import { chatWithNativeWebSearch, modelSupportsNativeSearch, detectNativeSearchTool } from "./native-search.js";
 
 /**
@@ -25,11 +25,12 @@ export async function runAgenticNativeLoop({
   onLog = null,
   maxRounds = 3,
   unrestrictedWeb = true,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = "auto",
   intermediateHint = null,
   finalSchemaHint = null
 }) {
+  void _temperature;
   if (!modelSupportsNativeSearch(model)) {
     return {
       content: "",
@@ -50,7 +51,6 @@ export async function runAgenticNativeLoop({
   let lastContent = "";
   let lastMode = "NATIVE_FAILED";
   let usedEffort = null;
-  const temp = temperature == null ? DEFAULT_TEMP : temperature;
 
   const gatherSystem =
     system +
@@ -64,7 +64,7 @@ AGENTIC WEB:
   for (let round = 1; round <= maxRounds; round++) {
     const isFinal = round === maxRounds;
     onLog?.(
-      `Agentic r${round}/${maxRounds} · tools≈${toolHint} · reason=cascade · temp=${temp}`
+      `Agentic r${round}/${maxRounds} · tools≈${toolHint} · reason=cascade · temp=omit`
     );
 
     let roundUser;
@@ -110,7 +110,7 @@ Jika sudah cukup, status=done.`);
       signal,
       isJson: true,
       unrestrictedWeb,
-      temperature: temp,
+      temperature: null,
       reasoningEffort,
       onLog
     });
@@ -188,7 +188,7 @@ Jika sudah cukup, status=done.`);
         signal,
         isJson: true,
         unrestrictedWeb,
-        temperature: temp,
+        temperature: null,
         reasoningEffort,
         onLog
       });

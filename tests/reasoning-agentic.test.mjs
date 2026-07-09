@@ -123,13 +123,11 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.deepStrictEqual(filtered.tools[0].filters.allowed_domains, IDX_SEARCH_DOMAINS);
 }
 
-// Temperature policy (frontier)
+// Temperature policy: always omit for all models
 assert.strictEqual(modelOmitsTemperature("o3"), true);
-assert.strictEqual(modelOmitsTemperature("o4-mini"), true);
-assert.strictEqual(modelOmitsTemperature("xai/grok-4.5"), false);
 assert.strictEqual(resolveTemperature("o3", 0.65), null);
-assert.strictEqual(resolveTemperature("gemini-2.0-flash", 0.65, { tools: true }), 1.0);
-assert.strictEqual(resolveTemperature("xai/grok-4.5", 0.65, { tools: true }), 0.65);
+assert.strictEqual(resolveTemperature("gemini-2.0-flash", 0.65, { tools: true }), null);
+assert.strictEqual(resolveTemperature("xai/grok-4.5", 0.65, { tools: true }), null);
 assert.strictEqual(resolveTemperature("xai/grok-4.5", null), null);
 assert.ok(shouldDropTemperature("Unsupported parameter: temperature"));
 
@@ -163,7 +161,7 @@ Some news about IHSG https://example.com/ihsg-drop
   assert.ok(body.input[0].content.includes("What is IHSG?"));
   assert.deepStrictEqual(body.tools, [{ type: "web_search" }]);
   assert.strictEqual(body.stream, false);
-  assert.ok(typeof body.temperature === "number" && body.temperature > 0);
+  assert.strictEqual(body.temperature, undefined);
   assert.strictEqual(body.reasoning, undefined);
   assert.strictEqual(body.reasoning_effort, undefined);
 
@@ -175,6 +173,15 @@ Some news about IHSG https://example.com/ihsg-drop
     temperature: 0.65
   });
   assert.strictEqual(o3body.temperature, undefined);
+
+  const grokTemp = buildNativeResponsesBody({
+    model: "xai/grok-4.5",
+    system: "s",
+    user: "u",
+    tools: [{ type: "web_search" }],
+    temperature: 0.9
+  });
+  assert.strictEqual(grokTemp.temperature, undefined);
 
   const withReason = buildNativeResponsesBody({
     model: "xai/grok-4.5",

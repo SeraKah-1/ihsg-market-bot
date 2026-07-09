@@ -3,10 +3,10 @@
  *
  *   POST {customBase}/v1/responses
  *   { model, input, tools: [{ type: "web_search" }], stream:false,
- *     temperature, reasoning_effort (cascade) }
+ *     reasoning_effort (cascade); temperature always OMITTED
  *
  * - API key + base URL from Settings (custom router)
- * - Reasoning high→med→low→off + temperature (default 0.65)
+ * - Reasoning high→med→low→off; no temperature field
  * - Tool profile cascade (bare web_search first)
  * - Outer hybrid: native → Jina search → Google News RSS
  */
@@ -15,8 +15,7 @@ import {
   getProxyUrl,
   extractJson,
   parseJsonLoose,
-  modelFor,
-  DEFAULT_TEMP
+  modelFor
 } from "../ai.js";
 import { appSettings, loadSettings } from "../state.js";
 import {
@@ -24,9 +23,7 @@ import {
   preferredReasoningEffort,
   reasoningEffortCascade,
   shouldDropReasoningLevel,
-  shouldTryNextToolProfile,
-  resolveTemperature,
-  shouldDropTemperature
+  shouldTryNextToolProfile
 } from "./reasoning.js";
 
 /** IDX / ID finance domains — xAI allows max 5 allowed_domains */
@@ -132,9 +129,10 @@ export function buildNativeResponsesBody({
   system,
   user,
   tools,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = null
 }) {
+  void _temperature; // always omit
   const content =
     system && String(system).trim()
       ? `${String(system).trim()}\n\n---\n\n${String(user || "")}`
@@ -145,9 +143,6 @@ export function buildNativeResponsesBody({
     tools: tools && tools.length ? tools : [{ type: "web_search" }],
     stream: false
   };
-  // null = omit (o-series / rejected by gateway). number = set.
-  const temp = resolveTemperature(model, temperature, { tools: true });
-  if (temp != null && !Number.isNaN(temp)) body.temperature = temp;
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
   return body;
 }
@@ -389,9 +384,10 @@ async function attemptNativeOnce({
   signal,
   tools,
   toolKind,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   reasoningEffort = null
 }) {
+  void _temperature;
   let endpoint;
   let apiKey;
   let useProxy;
@@ -425,7 +421,7 @@ async function attemptNativeOnce({
     system,
     user,
     tools,
-    temperature,
+    temperature: null,
     reasoningEffort
   });
 
@@ -500,20 +496,21 @@ async function attemptNativeOnce({
 }
 
 /**
- * Native web search: tool profiles × reasoning cascade + temperature.
+ * Native web search: tool profiles × reasoning cascade. Temperature always omitted.
  */
 export async function chatWithNativeWebSearch({
   model,
   system,
   user,
   signal = null,
-  temperature = DEFAULT_TEMP,
+  temperature: _temperature = null,
   isJson = false,
   unrestrictedWeb = false,
   reasoningEffort = "auto",
   onLog = null
 }) {
   loadSettings();
+  void _temperature;
 
   if (!String(model || "").trim()) {
     return {
@@ -531,17 +528,11 @@ export async function chatWithNativeWebSearch({
   const efforts = reasoningEffortCascade(preferred ?? "high");
   const attempts = [];
   let last = null;
-  // temp cascade: resolved value → omit (null) if gateway rejects temperature
-  let tempPref = temperature == null ? DEFAULT_TEMP : temperature;
-  let forceOmitTemp = false;
 
   for (const profile of toolProfiles) {
     for (const effort of efforts) {
-      const temp = forceOmitTemp
-        ? null
-        : resolveTemperature(model, tempPref, { tools: true });
       onLog?.(
-        `Native Responses tools=${profile.kind} reason=${effort || "off"} temp=${temp == null ? "omit" : temp}`
+        `Native Responses tools=${profile.kind} reason=${effort || "off"} temp=omit`
       );
       const result = await attemptNativeOnce({
         model,
@@ -550,26 +541,24 @@ export async function chatWithNativeWebSearch({
         signal,
         tools: profile.tools,
         toolKind: profile.kind,
-        temperature: temp,
+        temperature: null,
         reasoningEffort: effort
       });
       last = result;
       attempts.push({
         tools: profile.kind,
         reasoning: effort || "off",
-        temperature: temp == null ? "omit" : temp,
+        temperature: "omit",
         ok: !!result.ok,
         error: result.error || null
       });
 
       if (result.ok && (result.content || result.citations?.length)) {
         let content = result.content || "";
-        // Keep raw string; callers use parseJsonLoose. Only normalize if pure JSON extract works.
         if (isJson && content) {
           const loose = parseJsonLoose(content);
           if (loose) content = JSON.stringify(loose);
           else {
-            // leave raw for salvage (html <web_...> dumps)
             try {
               content = extractJson(content);
             } catch {
@@ -582,7 +571,7 @@ export async function chatWithNativeWebSearch({
           content,
           mode: result.mode || "NATIVE_RESPONSES",
           reasoningEffort: effort || null,
-          temperature: temp,
+          temperature: null,
           cascadeAttempts: attempts
         };
       }
@@ -600,18 +589,10 @@ export async function chatWithNativeWebSearch({
           cascadeAttempts: attempts
         };
       }
-      if (!forceOmitTemp && shouldDropTemperature(err)) {
-        onLog?.("temperature ditolak gateway → omit temp, retry");
-        forceOmitTemp = true;
-        // retry same effort without temp
-        continue;
-      }
-      // Drop reasoning level on param reject; else try next effort then next tool
       if (effort && shouldDropReasoningLevel(err)) {
         continue;
       }
       if (shouldTryNextToolProfile(err) || !result.ok) {
-        // exhausted efforts for this tool → outer loop next profile
         if (!effort || effort === efforts[efforts.length - 1]) break;
         continue;
       }
@@ -771,7 +752,7 @@ export async function hybridResearchSearch({
 
   if (tryNative) {
     onLog?.(
-      `Native Responses web_search (${model}) · reasoning cascade · temp=${DEFAULT_TEMP}`
+      `Native Responses web_search (${model}) · reasoning cascade · temp=omit`
     );
     const system = `Financial research agent IDX. Use web_search tool. Return JSON only:
 {"findings":[{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":""}]}

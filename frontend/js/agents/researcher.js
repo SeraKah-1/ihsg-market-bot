@@ -6,8 +6,7 @@ import {
   chatJson,
   modelFor,
   parseJsonLoose,
-  salvageFindingsFromText,
-  DEFAULT_TEMP
+  salvageFindingsFromText
 } from "../ai.js";
 import { researcherSystem } from "./constitution.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
@@ -137,7 +136,7 @@ export async function runResearcher({
       onLog,
       maxRounds: 3,
       unrestrictedWeb: true,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       finalSchemaHint: researchPackSchema()
     });
@@ -247,7 +246,7 @@ export async function runResearcher({
           2
         ) + "\n\nIsi schema.",
       signal,
-      temperature: DEFAULT_TEMP,
+      temperature: null,
       reasoningEffort: "auto",
       onLog
     });
