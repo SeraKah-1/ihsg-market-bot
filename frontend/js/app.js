@@ -3,6 +3,7 @@ import { runPipeline, runDeepDive, abortRun, downloadHtml, downloadJson } from "
 import { injectReportStylesOnce } from "./render-report.js";
 import { fetchModels } from "./ai.js";
 import { loadUniverseBrowser } from "./universe-browser.js";
+import { initAgentMemory } from "./agent-memory.js";
 
 const SHELL = () => document.querySelector(".shell");
 const THEME_KEY = "ihsg-theme";
@@ -332,9 +333,15 @@ function init() {
 
   fetch("/api/health")
     .then((r) => r.json())
-    .then((j) => {
+    .then(async (j) => {
       logLine("API ok · " + j.service);
-      setStatus("Siap · isi router lalu Run", "info");
+      const mem = await initAgentMemory(logLine);
+      setStatus(
+        mem.ok
+          ? "Siap · Firebase market memory OK"
+          : "Siap · memory lokal (Firebase auth off)",
+        mem.ok ? "ok" : "info"
+      );
     })
     .catch((e) => {
       logLine("API fail: " + e.message, "err");

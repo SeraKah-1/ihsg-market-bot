@@ -49,9 +49,22 @@ For a **fast smoke test**, set **Max ingest** to `40`–`80` (0 = full universe 
 - `POST /api/runs` · `GET /api/runs`
 - `GET/POST /api/memory/compact`
 
-## Firebase
+## Firebase (agent memory bus)
 
-Same project `mikirexpayin`, **new** Firestore DB id `ihsgmarket`, **new** storage bucket `ihsgmarket.firebasestorage.app` (create when ready). App works fully offline/local without Firebase.
+Project **`mikirexpayin`**, Firestore database id **`market`** (not `sandboxcognitive`).
+
+Each agent **saves** its pack, next agent **loads** it (Cognitive Sandbox style):
+
+```
+users/{uid}/ihsg_runs/{runId}
+users/{uid}/ihsg_runs/{runId}/agents/{research|analysis|writer|deep_dive}
+users/{uid}/ihsg_compact/{autoId}
+```
+
+Auth: **Anonymous** (enable in Firebase Console → Authentication → Sign-in method).  
+Rules: see `firestore.rules` (user-scoped). Deploy to the **market** database.
+
+Fallback: `localStorage` + `POST /api/runs` + `/api/memory/compact` if Firebase auth/rules fail.
 
 ## Tests
 

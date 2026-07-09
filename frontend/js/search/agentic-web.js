@@ -51,9 +51,6 @@ export async function runAgenticNativeLoop({
   let lastContent = "";
   let lastMode = "NATIVE_FAILED";
   let usedEffort = null;
-  let emptyFindingStreak = 0;
-  // Cap rounds when tools return nothing useful (avoid burning 6 empty rounds)
-  const effectiveMax = Math.min(maxRounds, 6);
 
   const gatherSystem =
     system +
@@ -62,13 +59,12 @@ export async function runAgenticNativeLoop({
 AGENTIC WEB:
 - Pakai web_search. Reason dulu dari data hard → tentukan query sendiri.
 - Dinamis: aksi korporasi, right issue, buyback, denda, proyek, free float, lapkeu.
-- Official / media / rumor. Jangan mengarang angka.
-- SETIAP putaran WAJIB return JSON murni (status/findings/gaps). JANGAN dump HTML atau tag <web_>.`;
+- Official / media / rumor. Jangan mengarang angka.`;
 
-  for (let round = 1; round <= effectiveMax; round++) {
-    const isFinal = round === effectiveMax;
+  for (let round = 1; round <= maxRounds; round++) {
+    const isFinal = round === maxRounds;
     onLog?.(
-      `Agentic r${round}/${effectiveMax} · tools≈${toolHint} · reason=cascade · temp=omit`
+      `Agentic r${round}/${maxRounds} · tools≈${toolHint} · reason=cascade · temp=omit`
     );
 
     let roundUser;
@@ -171,25 +167,11 @@ Jika sudah cukup, status=done.`);
         : JSON.stringify(result.content);
     transcript += `\n--- round ${round} ---\n${piece.slice(0, 8000)}\n`;
 
-    const nFind = Array.isArray(parsed?.findings) ? parsed.findings.length : 0;
     onLog?.(
       `Agentic r${round} ok mode=${result.mode} tools=${result.toolKind || "?"} reason=${
         result.reasoningEffort || "off"
-      } findings=${nFind || "—"}`
+      } findings=${parsed?.findings?.length ?? "—"}`
     );
-
-    if (!parsed || nFind === 0) {
-      emptyFindingStreak++;
-      if (emptyFindingStreak >= 2 && round < effectiveMax) {
-        onLog?.(
-          `Agentic ${emptyFindingStreak} putaran tanpa findings parseable → stop early, biar hybrid`,
-          "warn"
-        );
-        break;
-      }
-    } else {
-      emptyFindingStreak = 0;
-    }
 
     if (!isFinal && parsed?.status === "done" && (parsed.findings || []).length >= 3) {
       onLog?.("Gaps tertutup — final JSON…");

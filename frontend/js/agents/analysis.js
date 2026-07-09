@@ -113,30 +113,70 @@ export async function runAnalysis({
   const model = modelFor("analysis");
   onLog?.(`Analysis model=${model} · analyse + verify/crosscheck · temp=omit`);
 
-  // Optional clarify — skip if research already thin/failed (save router budget)
+  // Clarify web only if research thin — skip when already fat to avoid double timeout
   let clarifications = [];
-  const researchThin =
-    (research?.findings || []).length < 2 ||
-    research?.agentMeta?.mode === "agentic_salvage" ||
-    research?.agentMeta?.mode === "error_fallback";
-  if (searchMode !== "DEGRADED" && !researchThin) {
-    clarifications = await runAnalysisClarify({
-      shortlistPack,
-      research,
-      model,
-      searchMode,
-      signal,
-      onLog
-    });
-  } else if (researchThin) {
+  const findingsN = (research?.findings || []).length;
+  const salvageThin =
+    research?.agentMeta?.mode === "agentic_salvage" || findingsN < 4;
+  if (searchMode !== "DEGRADED" && salvageThin) {
+    try {
+      clarifications = await runAnalysisClarify({
+        shortlistPack,
+        research,
+        model,
+        searchMode,
+        signal,
+        onLog
+      });
+    } catch (e) {
+      onLog?.("Analysis clarify skip (error): " + e.message, "warn");
+      clarifications = [];
+    }
+  } else {
     onLog?.(
-      "Analysis skip clarify web (research tipis) — langsung thesis dari hard+research",
-      "warn"
+      `Analysis skip clarify web (research findings=${findingsN} mode=${research?.agentMeta?.mode || "?"})`
     );
   }
 
   const schema = briefingSchema(runId, shortlistPack.day, searchMode);
   let briefing;
+
+  // Compact user payload — large dumps caused Failed to fetch mid-flight
+  const userPayload = {
+    day: shortlistPack.day,
+    runId,
+    note:
+      "Research pack di-load dari Firebase memory bus (compact). " +
+      "Verifikasi + crosscheck + hidden. Metrics = fakta diam; prose = makna.",
+    memoryBus: research?.memoryRef || { runId, step: "research" },
+    marketRegime: shortlistPack.marketRegime,
+    ihsg: {
+      close: shortlistPack.ihsg?.close,
+      changePct: shortlistPack.ihsg?.changePct,
+      contextSummary: shortlistPack.ihsg?.context?.summary
+    },
+    breadth: shortlistPack.breadth,
+    globals: (shortlistPack.globals || []).slice(0, 8).map((g) => ({
+      label: g.label,
+      changePct: g.changePct
+    })),
+    shortlist: (shortlistPack.shortlist || []).map((s) => ({
+      ticker: s.ticker,
+      whySelected: s.whySelected,
+      changePct: s.metrics?.changePct,
+      rvol: s.metrics?.rvol,
+      zRet: s.metrics?.zRet,
+      contextSummary: s.context?.summary,
+      m1: s.context?.m1,
+      w1: s.context?.w1,
+      volTrend: s.context?.vol?.volumeTrend,
+      vsIhsg: s.vsIhsg,
+      flowHints: s.flowHints
+    })),
+    research,
+    clarificationsFromWeb: (clarifications || []).slice(0, 12),
+    memoryRecent: (memory || []).slice(0, 6)
+  };
 
   try {
     briefing = await chatJson({
@@ -145,68 +185,11 @@ export async function runAnalysis({
         analysisSystem() +
         "\n\nIsi SEMUA field narasi + analysisMeta (verifikasi)." +
         "\nJANGAN salin metrics ke prose — UI punya indicators JSON terpisah." +
-        "\nResearch pack + clarifications = sumber. Tulis story + reasoningChain yang saling nyambung." +
+        "\nResearch pack dari memory bus = sumber. Tulis story + reasoningChain yang saling nyambung." +
         "\nWajib isi: crossChecks, hiddenContext, missedByResearch, residualDoubts." +
         "\nSchema:\n" +
         schema,
-      user: JSON.stringify(
-        {
-          day: shortlistPack.day,
-          note:
-            "Field metrics/context = FAKTA referensi diam-diam. Narasi = makna + insight, bukan dump angka. " +
-            "Lakukan verifikasi & crosscheck. Cari hidden context & yang dilewat research. JSON murni.",
-          marketRegime: shortlistPack.marketRegime,
-          ihsg: {
-            close: shortlistPack.ihsg?.close,
-            changePct: shortlistPack.ihsg?.changePct,
-            // compact context only
-            contextSummary: shortlistPack.ihsg?.context?.summary,
-            volTrend: shortlistPack.ihsg?.context?.vol?.volumeTrend,
-            m1: shortlistPack.ihsg?.context?.m1
-              ? {
-                  retPct: shortlistPack.ihsg.context.m1.retPct,
-                  structure: shortlistPack.ihsg.context.m1.structure
-                }
-              : null
-          },
-          breadth: shortlistPack.breadth,
-          globals: (shortlistPack.globals || []).slice(0, 8).map((g) => ({
-            label: g.label,
-            changePct: g.changePct
-          })),
-          shortlist: (shortlistPack.shortlist || []).map((s) => ({
-            ticker: s.ticker,
-            whySelected: s.whySelected,
-            metrics: {
-              close: s.metrics?.close,
-              changePct: s.metrics?.changePct ?? s.metrics?.ret1dPct,
-              rvol: s.metrics?.rvol,
-              zRet: s.metrics?.zRet ?? s.metrics?.returnZ
-            },
-            structure:
-              s.context?.m1?.structure || s.context?.w1?.structure || null,
-            m1Ret: s.context?.m1?.retPct,
-            volTrend: s.context?.vol?.volumeTrend,
-            vsIhsg: s.vsIhsg,
-            flowHints: s.flowHints
-          })),
-          research: {
-            macroNote: research?.macroNote,
-            macroOutlookTag: research?.macroOutlookTag,
-            hotTakes: research?.hotTakes,
-            unexplainedMarket: research?.unexplainedMarket,
-            searchPlan: (research?.searchPlan || []).slice(0, 12),
-            findings: (research?.findings || []).slice(0, 24),
-            marketNotes: (research?.marketNotes || []).slice(0, 12),
-            perTicker: research?.perTicker,
-            agentMeta: research?.agentMeta
-          },
-          clarificationsFromWeb: clarifications,
-          memoryRecent: (memory || []).slice(0, 4)
-        },
-        null,
-        2
-      ),
+      user: JSON.stringify(userPayload, null, 2),
       signal,
       temperature: null,
       reasoningEffort: "auto",

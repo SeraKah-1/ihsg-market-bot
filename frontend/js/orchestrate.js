@@ -11,6 +11,17 @@ import {
   injectReportStylesOnce
 } from "./render-report.js";
 import { runDeepDiveAgent } from "./agents/deep-dive.js";
+import {
+  initAgentMemory,
+  startRunMemory,
+  saveAgentStep,
+  loadAgentStep,
+  loadCompactMemory,
+  appendCompactMemory,
+  finishRunMemory,
+  compactResearchForDownstream,
+  compactAnalysisForDownstream
+} from "./agent-memory.js";
 
 let abortCtrl = null;
 
@@ -19,7 +30,8 @@ export function abortRun() {
 }
 
 /**
- * Pipeline v3: Research (web) → Analysis (verify/crosscheck) → Writer (presentasi).
+ * Pipeline v3 + Firebase agent memory bus:
+ * Research SAVE → Analysis LOAD research → SAVE → Writer LOAD analysis → SAVE
  */
 export async function runPipeline({ skipAi = false } = {}) {
   loadSettings();
@@ -33,6 +45,9 @@ export async function runPipeline({ skipAi = false } = {}) {
   const max = appSettings.maxIngest > 0 ? appSettings.maxIngest : undefined;
 
   try {
+    setStatus("Firebase memory…", "busy");
+    await initAgentMemory(logLine);
+
     setStatus("Ingest OHLCV…", "busy");
     logLine(`Start ${runId} K=${k} force=${force}`);
 
@@ -68,78 +83,119 @@ export async function runPipeline({ skipAi = false } = {}) {
 
     renderShortlistTable(shortlistPack);
 
+    await startRunMemory(
+      runId,
+      {
+        kind: "briefing",
+        day: shortlistPack.day,
+        k,
+        searchMode: detectSearchMode(),
+        models: appSettings.models
+      },
+      logLine
+    );
+    await saveAgentStep(runId, "shortlist", shortlistPack, logLine);
+
     if (skipAi) {
+      await finishRunMemory(runId, "data_only", logLine);
       setStatus("Shortlist only (skip AI)", "ok");
-      return { shortlistPack, briefing: null };
+      return { shortlistPack, briefing: null, runId };
     }
 
-    const memRes = await fetch("/api/memory/compact?n=10", { signal });
-    const memJson = memRes.ok ? await memRes.json() : { items: [] };
-    const memory = memJson.items || [];
-
+    const memory = await loadCompactMemory(10, logLine);
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
+    logLine(
+      "Memory bus: Research → Firebase → Analysis → Firebase → Writer (db=market)"
+    );
 
-    // 1) Research — comprehensive web hunt
+    // 1) Research
     setStatus("Research (web)…", "busy");
-    const research = await runResearcher({
+    let research = await runResearcher({
       shortlistPack,
       searchMode,
       memory,
       signal,
-      onLog: logLine
+      onLog: logLine,
+      runId
     });
+    research.memoryRef = { runId, step: "research" };
+    await saveAgentStep(runId, "research", research, logLine);
     logLine(
-      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length} findings=${(research.findings || []).length}`
+      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length} findings=${(research.findings || []).length} → saved`
     );
 
-    // 2) Analysis — thesis + verify/crosscheck/hidden
+    // Reload from memory bus (source of truth for next agent)
+    const researchFromMem =
+      (await loadAgentStep(runId, "research", logLine)) || research;
+    const researchForAnalysis = compactResearchForDownstream(researchFromMem);
+
+    // 2) Analysis — loads research memory only (compact)
     setStatus("Analysis + verify…", "busy");
-    const analysis = await runAnalysis({
+    let analysis = await runAnalysis({
       shortlistPack,
-      research,
+      research: researchForAnalysis,
       memory,
       searchMode,
       runId,
       signal,
       onLog: logLine
     });
+    analysis.memoryRef = { runId, step: "analysis" };
+    await saveAgentStep(runId, "analysis", analysis, logLine);
+    logLine(
+      `Analysis done lean=${analysis.sentiment?.judgeLean || "?"} → saved to memory`
+    );
 
-    // 3) Writer — presentasi narasi untuk HTML
+    const analysisFromMem =
+      (await loadAgentStep(runId, "analysis", logLine)) || analysis;
+    const analysisForWriter = compactAnalysisForDownstream(analysisFromMem);
+
+    // 3) Writer — loads analysis memory
     setStatus("Writer…", "busy");
     let briefing = await runWriter({
       shortlistPack,
-      research,
-      analysis,
+      research: researchForAnalysis,
+      analysis: analysisForWriter,
       searchMode,
       runId,
       signal,
       onLog: logLine
     });
     briefing.researchPack = {
-      hotTakes: research.hotTakes,
-      macroNote: research.macroNote,
-      searchPlan: research.searchPlan,
-      agentMeta: research.agentMeta
+      hotTakes: researchFromMem.hotTakes,
+      macroNote: researchFromMem.macroNote,
+      searchPlan: researchFromMem.searchPlan,
+      agentMeta: researchFromMem.agentMeta
     };
     briefing.pipeline = "research→analysis→writer";
+    briefing.memoryBus = { runId, db: "market", path: `users/{uid}/ihsg_runs/${runId}` };
+    await saveAgentStep(runId, "writer", briefing, logLine);
 
-    await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(briefing)
-    });
-    if (briefing.memoryWrite?.compact) {
-      await fetch("/api/memory/compact", {
+    // final run + compact memory
+    try {
+      await fetch("/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify({ ...briefing, runId, final: true })
+      });
+    } catch {
+      /* */
+    }
+
+    if (briefing.memoryWrite?.compact) {
+      await appendCompactMemory(
+        {
           date: briefing.asOfSession,
           ...briefing.memoryWrite.compact,
-          openHypotheses: briefing.memoryWrite.openHypotheses || []
-        })
-      });
+          openHypotheses: briefing.memoryWrite.openHypotheses || [],
+          runId
+        },
+        logLine
+      );
     }
+
+    await finishRunMemory(runId, "done", logLine);
 
     injectReportStylesOnce();
     const html = renderBriefingHtml(briefing);
@@ -147,7 +203,8 @@ export async function runPipeline({ skipAi = false } = {}) {
     if (reportEl) reportEl.innerHTML = html;
     window.__lastBriefing = briefing;
     window.__lastShortlist = shortlistPack;
-    window.__lastResearch = research;
+    window.__lastResearch = researchFromMem;
+    window.__lastRunId = runId;
 
     await postRender();
 
@@ -155,10 +212,12 @@ export async function runPipeline({ skipAi = false } = {}) {
     logLine(
       "Done. lean=" +
         briefing.sentiment?.judgeLean +
+        " runId=" +
+        runId +
         " writer=" +
-        (briefing.presentation?.headline || briefing.writerMeta?.note || "").slice(0, 80)
+        (briefing.presentation?.headline || briefing.writerMeta?.note || "").slice(0, 60)
     );
-    return { shortlistPack, briefing, research, analysis };
+    return { shortlistPack, briefing, research: researchFromMem, analysis: analysisFromMem, runId };
   } catch (e) {
     if (e.name === "AbortError") {
       setStatus("Dibatalkan", "warn");
@@ -189,8 +248,10 @@ export async function runDeepDive(tickerRaw) {
 
   const runId = `deep_${ticker}_${Date.now()}`;
   try {
+    await initAgentMemory(logLine);
+
     setStatus(`Deep dive ${ticker}: data…`, "busy");
-    logLine(`Deep dive start ${ticker}`);
+    logLine(`Deep dive start ${ticker} runId=${runId}`);
 
     const packRes = await fetch(`/api/market/ticker/${ticker}`, { signal });
     if (!packRes.ok) throw new Error(await packRes.text());
@@ -207,18 +268,24 @@ export async function runDeepDive(tickerRaw) {
       });
     }
 
+    await startRunMemory(
+      runId,
+      { kind: "deep_dive", ticker, day: marketPack.day || null },
+      logLine
+    );
+    await saveAgentStep(runId, "market_pack", marketPack, logLine);
+
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
     if (searchMode === "FULL") {
-      logLine("Deep dive FULL — agentic native + reasoning");
+      logLine("Deep dive FULL — agentic native + reasoning + Firebase save");
     } else if (searchMode === "DEGRADED") {
       logLine("DEGRADED — deep dive tanpa search live", "warn");
     } else {
       logLine("Deep dive FALLBACK — pack search seed");
     }
 
-    const memRes = await fetch("/api/memory/compact?n=8", { signal });
-    const memJson = memRes.ok ? await memRes.json() : { items: [] };
+    const memory = await loadCompactMemory(8, logLine);
 
     setStatus(`Deep dive ${ticker}: agentic AI…`, "busy");
     const report = await runDeepDiveAgent({
@@ -227,23 +294,31 @@ export async function runDeepDive(tickerRaw) {
       searchResults: [],
       pageContents: [],
       searchMode,
-      memory: memJson.items || [],
+      memory,
       runId,
       signal,
       onLog: logLine
     });
 
-    await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(report)
-    });
+    await saveAgentStep(runId, "deep_dive", report, logLine);
+    await finishRunMemory(runId, "done", logLine);
+
+    try {
+      await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...report, runId, final: true })
+      });
+    } catch {
+      /* */
+    }
 
     injectReportStylesOnce();
     const html = renderDeepDiveHtml(report);
     const reportEl = document.getElementById("report-view");
     if (reportEl) reportEl.innerHTML = html;
     window.__lastBriefing = report;
+    window.__lastRunId = runId;
 
     const sl = document.getElementById("shortlist-table");
     if (sl && marketPack.stock) {
@@ -269,8 +344,9 @@ export async function runDeepDive(tickerRaw) {
         </div>`;
     }
 
+    await postRender();
     setStatus(`Deep dive ${ticker} selesai · ${report.forecast?.lean || "?"}`, "ok");
-    logLine(`Deep dive done ${ticker} lean=${report.forecast?.lean}`);
+    logLine(`Deep dive done ${ticker} · Firebase agents/deep_dive`);
     return report;
   } catch (e) {
     if (e.name === "AbortError") {

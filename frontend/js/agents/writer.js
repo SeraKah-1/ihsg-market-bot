@@ -141,13 +141,13 @@ export async function runWriter({
         schema,
       user: JSON.stringify(
         {
-          task: "Tulis ulang briefing agar enak dibaca. Input = hasil Analysis (sudah diverifikasi).",
+          task: "Tulis ulang briefing agar enak dibaca. Input = Analysis dari Firebase memory bus.",
+          memoryBus: analysis?.memoryRef || { runId, step: "analysis" },
           hardFactsNote:
-            "Angka harga/volume ada di shortlistHard — JANGAN dump ke teks. UI card pakai JSON terpisah.",
+            "Angka harga/volume di shortlistHard — JANGAN dump ke teks. UI card = JSON terpisah.",
           shortlistHard: (shortlistPack.shortlist || []).map((s) => ({
             ticker: s.ticker,
             whySelected: s.whySelected,
-            // only coarse signals for writer context, not for prose dump
             flowAlive: s.flowHints?.flowAlive,
             exitLiquidityHint: s.flowHints?.exitLiquidityHint,
             ret1dSign:
@@ -179,8 +179,8 @@ export async function runWriter({
           },
           researchPunch: {
             macroNote: research?.macroNote,
-            hotTakes: (research?.hotTakes || []).slice(0, 5),
-            unexplainedMarket: (research?.unexplainedMarket || []).slice(0, 6)
+            hotTakes: (research?.hotTakes || []).slice(0, 6),
+            unexplainedMarket: (research?.unexplainedMarket || []).slice(0, 8)
           },
           analysisDraft: stripForWriter(analysis)
         },

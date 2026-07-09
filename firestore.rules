@@ -1,0 +1,26 @@
+rules_version = '2';
+// Deploy ke database **market** (bukan sandboxcognitive):
+//   firebase deploy --only firestore:rules --project mikirexpayin
+// Pastikan .firebaserc / firestore.databases target "market" jika multi-DB.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // IHSG Market Bot — anonymous or Google, user-scoped
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+      match /{document=**} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

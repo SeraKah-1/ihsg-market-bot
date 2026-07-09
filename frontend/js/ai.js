@@ -188,121 +188,19 @@ export function salvageFindingsFromText(text) {
   return findings;
 }
 
-function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
-      return;
-    }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener?.(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
-      },
-      { once: true }
-    );
-  });
-}
-
-function isNetworkFetchError(e) {
+/**
+ * Single chat/completions attempt (optional reasoning fields already on body).
+ */
+function isTransientNetworkError(e) {
   const m = String(e?.message || e || "");
   return (
-    /Failed to fetch|NetworkError|network error|Load failed|ECONNRESET|ECONNREFUSED|fetch failed|AbortError.*timeout/i.test(
+    e?.name === "TypeError" ||
+    /Failed to fetch|NetworkError|network|ECONNRESET|ETIMEDOUT|fetch failed|Load failed/i.test(
       m
-    ) || e?.name === "TypeError"
+    )
   );
 }
 
-function messagesToInput(messages) {
-  // Responses API: prefer single user blob (custom routers often strip multi-role)
-  const parts = (messages || []).map((m) => {
-    const role = m.role || "user";
-    const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    if (role === "system") return `SYSTEM:\n${c}`;
-    if (role === "assistant") return `ASSISTANT:\n${c}`;
-    return `USER:\n${c}`;
-  });
-  return [{ role: "user", content: parts.join("\n\n") }];
-}
-
-function extractTextFromResponsesData(data) {
-  if (!data || typeof data !== "object") return "";
-  if (typeof data.output_text === "string" && data.output_text) return data.output_text;
-  if (typeof data.content === "string" && data.content) return data.content;
-  const texts = [];
-  if (Array.isArray(data.output)) {
-    for (const item of data.output) {
-      if (item?.type === "message" && Array.isArray(item.content)) {
-        for (const c of item.content) {
-          if (c?.type === "output_text" || c?.type === "text") texts.push(c.text || "");
-          else if (typeof c?.text === "string") texts.push(c.text);
-        }
-      }
-      if (typeof item?.content === "string") texts.push(item.content);
-      if (item?.type === "model_output" && Array.isArray(item.content)) {
-        for (const c of item.content) if (c?.text) texts.push(c.text);
-      }
-    }
-  }
-  if (data.choices?.[0]?.message?.content) {
-    const c = data.choices[0].message.content;
-    texts.push(typeof c === "string" ? c : JSON.stringify(c));
-  }
-  return texts.filter(Boolean).join("\n");
-}
-
-function parseSseOrJsonText(rawText) {
-  const t = String(rawText || "").trim();
-  if (!t) return { data: null, text: "" };
-  if (t.startsWith("{") || t.startsWith("[")) {
-    try {
-      const data = JSON.parse(t);
-      return { data, text: extractTextFromResponsesData(data) };
-    } catch {
-      /* fall through */
-    }
-  }
-  // SSE: event: ... data: ...
-  if (/^event:|data:/m.test(t)) {
-    let finalObj = null;
-    let delta = "";
-    for (const line of t.split(/\n/)) {
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      try {
-        const d = JSON.parse(payload);
-        if (d.type === "response.completed" && d.response) finalObj = d.response;
-        if (d.response && (d.response.output || d.response.output_text)) finalObj = d.response;
-        if (
-          d.type === "response.output_text.delta" ||
-          String(d.type || "").includes("output_text.delta")
-        ) {
-          delta += d.delta || d.text || "";
-        }
-        if (d.type === "response.output_text.done" && d.text) delta = d.text;
-        if (d.choices?.[0]?.delta?.content) delta += d.choices[0].delta.content;
-      } catch {
-        /* */
-      }
-    }
-    if (finalObj) {
-      return {
-        data: finalObj,
-        text: extractTextFromResponsesData(finalObj) || delta
-      };
-    }
-    return { data: null, text: delta };
-  }
-  return { data: null, text: t };
-}
-
-/**
- * Prefer /v1/responses (works on many custom routers for Grok).
- * Fallback /v1/chat/completions.
- */
 async function chatCompleteOnce({
   model,
   messages,
@@ -310,134 +208,78 @@ async function chatCompleteOnce({
   signal = null,
   temperature: _temperature = null,
   reasoningEffort = null,
-  path = "responses"
+  retries = 2
 }) {
-  void _temperature;
+  void _temperature; // product: never send temperature
   const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
-  const headers = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
-    "X-Title": "IHSG Market Bot"
-  };
-
-  if (path === "responses") {
-    let targetUrl = endpoint.endsWith("/v1")
-      ? `${endpoint}/responses`
-      : endpoint.endsWith("/responses")
-        ? endpoint
-        : `${endpoint}/v1/responses`;
-    if (useProxy) targetUrl = getProxyUrl(targetUrl);
-
-    const body = {
-      model,
-      input: messagesToInput(messages),
-      stream: false
-    };
-    // Do NOT set response_format — many routers reject it on responses
-    if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
-
-    const res = await fetch(targetUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal
-    });
-    const rawText = await res.text();
-    if (!res.ok) {
-      throw new Error(`LLM responses ${res.status}: ${rawText.slice(0, 400)}`);
-    }
-    const { data, text } = parseSseOrJsonText(rawText);
-    let content = text || "";
-    if (!content && data) content = extractTextFromResponsesData(data);
-    if (isJson && content) {
-      const loose = parseJsonLoose(content);
-      content = loose ? JSON.stringify(loose) : extractJson(content);
-    }
-    if (!content) {
-      throw new Error("LLM responses empty output");
-    }
-    return {
-      content,
-      raw: data,
-      reasoning: "",
-      reasoningEffort: reasoningEffort || null,
-      via: "responses"
-    };
-  }
-
-  // chat/completions fallback
   let targetUrl = `${endpoint}/chat/completions`;
   if (useProxy) targetUrl = getProxyUrl(targetUrl);
 
+  // Cap payload — huge messages often kill proxy mid-flight → Failed to fetch
+  const bodyMessages = messages.map((m) => ({
+    role: m.role,
+    content:
+      typeof m.content === "string" && m.content.length > 100_000
+        ? m.content.slice(0, 100_000) + "\n…[truncated for transport]"
+        : m.content
+  }));
+
   const body = {
     model,
-    messages,
+    messages: bodyMessages,
     stream: false
   };
-  // json_object often breaks custom routers — only when not grok/xai
-  const m = String(model || "").toLowerCase();
-  if (isJson && !/grok|xai/.test(m)) {
-    body.response_format = { type: "json_object" };
-  }
+  if (isJson) body.response_format = { type: "json_object" };
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
 
-  const res = await fetch(targetUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal
-  });
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const res = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
+          "X-Title": "IHSG Market Bot"
+        },
+        body: JSON.stringify(body),
+        signal
+      });
 
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`LLM chat ${res.status}: ${t.slice(0, 400)}`);
-  }
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`LLM ${res.status}: ${t.slice(0, 400)}`);
+      }
 
-  const rawText = await res.text();
-  let data;
-  try {
-    data = JSON.parse(rawText);
-  } catch {
-    const parsed = parseSseOrJsonText(rawText);
-    data = parsed.data;
-    let content = parsed.text || "";
-    if (isJson && content) {
-      const loose = parseJsonLoose(content);
-      content = loose ? JSON.stringify(loose) : extractJson(content);
+      const data = await res.json();
+      let content = data.choices?.[0]?.message?.content || "";
+      if (isJson) content = extractJson(content);
+      return {
+        content,
+        raw: data,
+        reasoning:
+          data.choices?.[0]?.message?.reasoning_content ||
+          data.choices?.[0]?.message?.reasoning ||
+          "",
+        reasoningEffort: reasoningEffort || null
+      };
+    } catch (e) {
+      lastErr = e;
+      if (signal?.aborted) throw e;
+      if (isTransientNetworkError(e) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        continue;
+      }
+      throw e;
     }
-    if (!content) throw new Error("LLM chat non-JSON body");
-    return {
-      content,
-      raw: data,
-      reasoning: "",
-      reasoningEffort: reasoningEffort || null,
-      via: "chat_sse"
-    };
   }
-
-  let content = data.choices?.[0]?.message?.content || "";
-  if (typeof content !== "string") content = JSON.stringify(content || "");
-  if (isJson && content) {
-    const loose = parseJsonLoose(content);
-    content = loose ? JSON.stringify(loose) : extractJson(content);
-  }
-  return {
-    content,
-    raw: data,
-    reasoning:
-      data.choices?.[0]?.message?.reasoning_content ||
-      data.choices?.[0]?.message?.reasoning ||
-      "",
-    reasoningEffort: reasoningEffort || null,
-    via: "chat"
-  };
+  throw lastErr || new Error("chatCompleteOnce failed");
 }
 
 /**
- * Non-stream completion: Responses first → chat/completions.
- * Reasoning cascade + network retries.
+ * Non-stream chat completion with reasoning cascade high→med→low→off.
  */
 export async function chatComplete({
   model,
@@ -451,71 +293,32 @@ export async function chatComplete({
   void _temperature;
   const preferred = preferredReasoningEffort(model, reasoningEffort);
   const efforts = reasoningEffortCascade(preferred ?? "high");
-  const paths = ["responses", "chat"];
   let lastErr = null;
 
-  for (const path of paths) {
-    for (const effort of efforts) {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          onLog?.(
-            `chatComplete via=${path} model=${model} temp=omit reason=${effort || "off"}${attempt > 1 ? ` retry=${attempt}` : ""}`
-          );
-          return await chatCompleteOnce({
-            model,
-            messages,
-            isJson,
-            signal,
-            temperature: null,
-            reasoningEffort: effort,
-            path
-          });
-        } catch (e) {
-          lastErr = e;
-          if (signal?.aborted) throw e;
-          const msg = String(e.message || e);
-
-          if (isNetworkFetchError(e) && attempt < 3) {
-            onLog?.(
-              `Network ${msg.slice(0, 80)} → tunggu ${attempt * 1.2}s lalu retry`,
-              "warn"
-            );
-            await sleep(1200 * attempt, signal);
-            continue;
-          }
-
-          if (shouldDropReasoningLevel(e) && effort) {
-            onLog?.(
-              `reason=${effort} ditolak → turun cascade: ${msg.slice(0, 120)}`
-            );
-            break; // next effort
-          }
-          if (
-            effort &&
-            /400|422|unknown|unrecognized|parameter|reasoning/i.test(msg)
-          ) {
-            break; // next effort
-          }
-          // path-level failure (404, empty, method) → try next path
-          if (
-            /404|405|not found|responses empty|unsupported|chat \d{3}|responses \d{3}/i.test(
-              msg
-            )
-          ) {
-            onLog?.(`via=${path} gagal (${msg.slice(0, 100)}) → path lain`, "warn");
-            attempt = 99; // break attempt loop
-            break;
-          }
-          // hard fail on last path
-          if (path === paths[paths.length - 1] && attempt >= 3) throw e;
-          if (!isNetworkFetchError(e) && path === "responses") {
-            onLog?.(`via=responses error → coba chat/completions: ${msg.slice(0, 100)}`, "warn");
-            attempt = 99;
-            break;
-          }
-          throw e;
-        }
+  for (const effort of efforts) {
+    try {
+      onLog?.(
+        `chatComplete model=${model} temp=omit reason=${effort || "off"}`
+      );
+      return await chatCompleteOnce({
+        model,
+        messages,
+        isJson,
+        signal,
+        temperature: null,
+        reasoningEffort: effort
+      });
+    } catch (e) {
+      lastErr = e;
+      if (signal?.aborted) throw e;
+      if (shouldDropReasoningLevel(e) && effort) {
+        onLog?.(`reason=${effort} ditolak → turun cascade: ${String(e.message || e).slice(0, 120)}`);
+        continue;
       }
+      if (effort && /400|422|unknown|unrecognized|parameter/i.test(String(e.message || e))) {
+        continue;
+      }
+      throw e;
     }
   }
   throw lastErr || new Error("chatComplete cascade exhausted");
@@ -531,22 +334,16 @@ export async function chatJson({
   onLog = null
 }) {
   void _temperature;
-  // Keep user payload bounded — huge research dumps cause router/browser fetch fail
-  let userStr = String(user || "");
-  if (userStr.length > 90000) {
-    onLog?.(`chatJson user payload trim ${userStr.length}→90000`, "warn");
-    userStr = userStr.slice(0, 90000) + "\n…[truncated]";
-  }
   const messages = [
     {
       role: "system",
       content:
         system +
-        "\n\nOutput HARUS JSON valid murni. Tanpa markdown fence, tanpa prosa di luar JSON, tanpa HTML/web_ dump."
+        "\n\nOutput HARUS JSON valid murni. Tanpa markdown fence, tanpa prosa di luar JSON."
     },
-    { role: "user", content: userStr }
+    { role: "user", content: user }
   ];
-  const { content, reasoningEffort: used, via } = await chatComplete({
+  const { content, reasoningEffort: used } = await chatComplete({
     model,
     messages,
     isJson: true,
@@ -555,40 +352,38 @@ export async function chatJson({
     reasoningEffort,
     onLog
   });
-  onLog?.(`chatJson ok via=${via || "?"} chars=${String(content || "").length}`);
-
+  // Prefer loose parse first (handles fence / html prefix)
   let parsed = parseJsonLoose(content);
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-    parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: used, via };
+  if (parsed && typeof parsed === "object") {
+    parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: used };
     return parsed;
   }
-
-  onLog?.("chatJson loose-parse gagal → repair pass", "warn");
-  const repair = await chatComplete({
-    model,
-    messages: [
-      {
-        role: "system",
-        content: "Perbaiki jadi JSON object valid saja. Tidak ada teks lain."
-      },
-      { role: "user", content: String(content || "").slice(0, 60000) }
-    ],
-    isJson: true,
-    signal,
-    temperature: null,
-    reasoningEffort: "off",
-    onLog
-  });
-  parsed = parseJsonLoose(repair.content);
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error(
-      "chatJson: model tidak return JSON parseable (" +
-        String(content || "").slice(0, 80) +
-        ")"
-    );
+  try {
+    parsed = JSON.parse(content);
+    parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: used };
+    return parsed;
+  } catch (e) {
+    const repair = await chatComplete({
+      model,
+      messages: [
+        {
+          role: "system",
+          content: "Perbaiki jadi JSON valid saja. Tidak ada teks lain."
+        },
+        { role: "user", content: String(content || "").slice(0, 60_000) }
+      ],
+      isJson: true,
+      signal,
+      temperature: null,
+      reasoningEffort: "off",
+      onLog
+    });
+    const fixed = parseJsonLoose(repair.content) || JSON.parse(repair.content);
+    if (fixed && typeof fixed === "object") {
+      fixed.__meta = { ...(fixed.__meta || {}), reasoningEffort: used, repaired: true };
+    }
+    return fixed;
   }
-  parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: "off", via: repair.via };
-  return parsed;
 }
 
 export function modelFor(role) {
