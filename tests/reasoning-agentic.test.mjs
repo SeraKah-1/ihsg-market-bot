@@ -31,7 +31,10 @@ const {
 const {
   modelSupportsNativeSearch,
   detectNativeSearchTool,
-  buildToolProfileCascade
+  buildToolProfileCascade,
+  buildWebSearchTool,
+  stripWebSearchFilters,
+  IDX_SEARCH_DOMAINS
 } = await import(nativeUrl);
 
 // --- modelLooksReasoning (heuristic only) ---
@@ -71,6 +74,47 @@ assert.strictEqual(modelSupportsNativeSearch(""), false);
 
 // unknown model still gets web_search
 assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web_search");
+
+// xAI docs shape: filters.allowed_domains (NOT top-level allowed_domains)
+{
+  const t = buildWebSearchTool({ allowedDomains: ["idx.co.id", "kontan.co.id"] });
+  assert.strictEqual(t.type, "web_search");
+  assert.deepStrictEqual(t.filters, { allowed_domains: ["idx.co.id", "kontan.co.id"] });
+  assert.strictEqual(t.allowed_domains, undefined);
+
+  const ex = buildWebSearchTool({ excludedDomains: ["spam.com"] });
+  assert.deepStrictEqual(ex.filters, { excluded_domains: ["spam.com"] });
+
+  // cannot set both — prefer allow-list
+  const both = buildWebSearchTool({
+    allowedDomains: ["a.com"],
+    excludedDomains: ["b.com"]
+  });
+  assert.deepStrictEqual(both.filters, { allowed_domains: ["a.com"] });
+  assert.ok(!both.filters.excluded_domains);
+
+  const img = buildWebSearchTool({ enableImageUnderstanding: true });
+  assert.strictEqual(img.enable_image_understanding, true);
+
+  assert.deepStrictEqual(stripWebSearchFilters(t), { type: "web_search" });
+  assert.deepStrictEqual(buildWebSearchTool(), { type: "web_search" });
+}
+
+// Grok preferred tool uses docs filters + max 5 domains
+{
+  const grok = detectNativeSearchTool("grok-4.5");
+  assert.strictEqual(grok.kind, "xai_web_search");
+  const tool = grok.tools[0];
+  assert.strictEqual(tool.type, "web_search");
+  assert.ok(tool.filters?.allowed_domains);
+  assert.strictEqual(tool.allowed_domains, undefined);
+  assert.ok(tool.filters.allowed_domains.length <= 5);
+  assert.deepStrictEqual(tool.filters.allowed_domains, IDX_SEARCH_DOMAINS);
+
+  // unrestricted cascade: no filters on first profile
+  const deep = buildToolProfileCascade("grok-4.5", { unrestrictedWeb: true });
+  assert.deepStrictEqual(deep[0].tools[0], { type: "web_search" });
+}
 
 // tool cascade has multiple profiles
 {

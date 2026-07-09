@@ -35,7 +35,7 @@ Dari skill docs decolua/9router:
 
 | Opsi | Kelebihan | Kelemahan | Verdict |
 |------|-----------|-----------|---------|
-| **Native model tools** (`web_search` / `google_search`) | Grounding bagus, citation, domain filter (xAI max 5), “pakai otak model” | Bukan full-page extract; tergantung gateway/model; biaya model | **Primary untuk search** saat FULL |
+| **Native model tools** (`web_search` / `google_search`) | Grounding bagus, citation, domain filter via docs shape `filters.allowed_domains` (xAI max 5), “pakai otak model” | Bukan full-page extract; tergantung gateway/model; biaya model | **Primary untuk search** saat FULL |
 | **Native HTTP scrape** (server `GET` HTML) | Zero third party | CORS/bot block, HTML kotor, JS-rendered gagal | Hanya soft last-resort (`allowNativeRaw`) |
 | **Jina Reader `r.jina.ai`** | Markdown LLM-friendly, cache, rate limit lebih tinggi dengan Bearer key (docs: ~500 RPM auth vs ~20 anon), JSON title+content | Token/quota Jina; latency ~detik | **Primary untuk page fetch** |
 | **Jina Search `s.jina.ai`** | SERP + snippet/content, `gl=ID` | Butuh key untuk production RPM; fixed token cost per request | **Fallback search** setelah native |

@@ -28,6 +28,56 @@ export const IDX_SEARCH_DOMAINS = [
 ];
 
 /**
+ * Build xAI / OpenAI Responses API web_search tool object per official docs:
+ *   { "type": "web_search" }
+ *   { "type": "web_search", "filters": { "allowed_domains": [...] } }
+ *   { "type": "web_search", "filters": { "excluded_domains": [...] } }
+ *   optional: enable_image_understanding, enable_image_search
+ *
+ * Docs: https://docs.x.ai/developers/tools/web-search
+ * - allowed_domains and excluded_domains cannot both be set
+ * - max 5 domains for xAI
+ *
+ * @param {object} [opts]
+ * @param {string[]} [opts.allowedDomains]
+ * @param {string[]} [opts.excludedDomains]
+ * @param {boolean} [opts.enableImageUnderstanding]
+ * @param {boolean} [opts.enableImageSearch]
+ */
+export function buildWebSearchTool(opts = {}) {
+  const tool = { type: "web_search" };
+  const allowed = Array.isArray(opts.allowedDomains)
+    ? opts.allowedDomains.filter(Boolean).slice(0, 5)
+    : [];
+  const excluded = Array.isArray(opts.excludedDomains)
+    ? opts.excludedDomains.filter(Boolean).slice(0, 5)
+    : [];
+
+  if (allowed.length && excluded.length) {
+    // docs: cannot set both — prefer allow-list
+    tool.filters = { allowed_domains: allowed };
+  } else if (allowed.length) {
+    tool.filters = { allowed_domains: allowed };
+  } else if (excluded.length) {
+    tool.filters = { excluded_domains: excluded };
+  }
+
+  if (opts.enableImageUnderstanding === true) {
+    tool.enable_image_understanding = true;
+  }
+  if (opts.enableImageSearch === true) {
+    tool.enable_image_search = true;
+  }
+  return tool;
+}
+
+/** Strip domain filters / image flags → bare web_search (deep dive / unrestricted). */
+export function stripWebSearchFilters(tool) {
+  if (!tool || tool.type !== "web_search") return tool;
+  return { type: "web_search" };
+}
+
+/**
  * Infer preferred native search tool config from model id (hint only).
  * Unknown models still get web_search tried via cascade.
  */
@@ -39,14 +89,10 @@ export function detectNativeSearchTool(model) {
     m.startsWith("x-ai/") ||
     m.includes("xai-")
   ) {
+    // xAI Responses: type web_search + filters.allowed_domains (max 5)
     return {
       kind: "xai_web_search",
-      tools: [
-        {
-          type: "web_search",
-          allowed_domains: IDX_SEARCH_DOMAINS
-        }
-      ]
+      tools: [buildWebSearchTool({ allowedDomains: IDX_SEARCH_DOMAINS })]
     };
   }
   if (m.includes("gemini") || m.includes("google/")) {
@@ -56,13 +102,14 @@ export function detectNativeSearchTool(model) {
     };
   }
   if (m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("o4")) {
+    // OpenAI Responses also uses filters.allowed_domains — bare tool by default
     return {
       kind: "openai_web_search",
-      tools: [{ type: "web_search" }]
+      tools: [buildWebSearchTool()]
     };
   }
-  // Default try OpenAI-style web_search for every model
-  return { kind: "generic_web_search", tools: [{ type: "web_search" }] };
+  // Default try OpenAI/xAI-style web_search for every model
+  return { kind: "generic_web_search", tools: [buildWebSearchTool()] };
 }
 
 /**
@@ -75,24 +122,26 @@ export function modelSupportsNativeSearch(model) {
 
 /**
  * Ordered tool profiles to attempt (deduped by JSON).
+ * Grok preferred: filtered web_search (docs schema) → bare web_search → google → both.
  */
 export function buildToolProfileCascade(model, { unrestrictedWeb = false } = {}) {
   const preferred = detectNativeSearchTool(model);
   let first = preferred.tools;
   if (unrestrictedWeb) {
-    // drop domain filters for deep dive
+    // drop domain filters for deep dive (docs bare tool)
     first = first.map((t) => {
-      if (t && t.type === "web_search") return { type: "web_search" };
+      if (t && t.type === "web_search") return stripWebSearchFilters(t);
       return t;
     });
   }
   const profiles = [
     { kind: preferred.kind, tools: first },
-    { kind: "web_search", tools: [{ type: "web_search" }] },
+    // Always try bare web_search next (docs basic usage) if preferred had filters
+    { kind: "web_search", tools: [buildWebSearchTool()] },
     { kind: "google_search", tools: [{ type: "google_search" }] },
     {
       kind: "web_search+google_search",
-      tools: [{ type: "web_search" }, { type: "google_search" }]
+      tools: [buildWebSearchTool(), { type: "google_search" }]
     }
   ];
   // dedupe by tools JSON
