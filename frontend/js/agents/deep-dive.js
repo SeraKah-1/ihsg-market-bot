@@ -40,6 +40,7 @@ export async function runDeepDiveAgent({
   ticker,
   marketPack,
   searchResults,
+  pageContents = [],
   searchMode,
   memory,
   runId,
@@ -115,6 +116,13 @@ export async function runDeepDiveAgent({
         }
       : null,
     searchResults: (searchResults || []).slice(0, 40),
+    // full-page extracts (9r-fetch or free Jina) — prefer over title-only
+    pageContents: (pageContents || []).slice(0, 5).map((p) => ({
+      url: p.url,
+      title: p.title,
+      text: String(p.text || "").slice(0, 6000),
+      provider: p.provider || p.layer
+    })),
     memoryRecent: memory || []
   };
 
@@ -126,7 +134,7 @@ export async function runDeepDiveAgent({
         JSON.stringify(payload, null, 2) +
         "\n\nTugas: deep dive " +
         ticker +
-        ". Cari needle. Jangan kosongkan section tanpa alasan unexplained.",
+        ". Utamakan pageContents (full text) lalu searchResults. Cari needle. Jangan kosongkan section tanpa unexplained.",
       signal,
       temperature: 0.35
     });

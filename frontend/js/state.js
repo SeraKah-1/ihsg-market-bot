@@ -15,6 +15,9 @@ export const DEFAULT_SETTINGS = {
   maxIngest: 0,
   forceRefresh: false,
   preferNativeSearch: true,
+  /** 9Router web provider ids (optional). Empty = try free-friendly candidates. */
+  searchProvider: "",
+  fetchProvider: "",
   tavilyApiKey: "",
   reasoningKeywords: "qwen, deepseek-r1, o1, o3, reasoning, thinking, kimi, qwq",
   searchModeOverride: "auto"

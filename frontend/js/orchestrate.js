@@ -99,12 +99,14 @@ export async function runPipeline({ skipAi = false } = {}) {
         searchMode,
         signal,
         onLog: logLine,
-        unrestrictedWeb: false
+        unrestrictedWeb: false,
+        fetchPages: false,
+        fetchLimit: 0
       });
       searchResults = hybrid.results;
       searchModeEffective = hybrid.searchModeEffective || searchMode;
       logLine(
-        `Search hits: ${searchResults.length} (effective=${searchModeEffective}, native=${hybrid.nativeMode || "—"})`
+        `Search hits: ${searchResults.length} layer=${hybrid.layer || "—"} effective=${searchModeEffective}`
       );
     }
 
@@ -378,19 +380,25 @@ export async function runDeepDive(tickerRaw) {
     if (searchMode !== "DEGRADED") {
       const queries = deepDiveQueries(ticker, marketPack.day);
       // Deep dive: unrestricted web for native tools (full internet, not only 5 domains)
+      let pageContents = [];
       const hybrid = await hybridResearchSearch({
         model: researchModel(),
         queries,
         searchMode: searchMode === "auto" ? "FULL" : searchMode,
         signal,
         onLog: logLine,
-        unrestrictedWeb: true
+        unrestrictedWeb: true,
+        fetchPages: true,
+        fetchLimit: 4
       });
       searchResults = hybrid.results;
+      pageContents = hybrid.pages || [];
       searchModeEffective = hybrid.searchModeEffective || searchMode;
       logLine(
-        `Deep search hits: ${searchResults.length} queries=${queries.length} effective=${searchModeEffective} native=${hybrid.nativeMode || "—"}`
+        `Deep search hits: ${searchResults.length} pages=${pageContents.length} layer=${hybrid.layer || "—"} effective=${searchModeEffective}`
       );
+      // stash for agent
+      marketPack._pageContents = pageContents;
     } else {
       logLine("DEGRADED — deep dive tanpa search live", "warn");
     }
@@ -403,6 +411,7 @@ export async function runDeepDive(tickerRaw) {
       ticker,
       marketPack,
       searchResults,
+      pageContents: marketPack._pageContents || [],
       searchMode: searchModeEffective,
       memory: memJson.items || [],
       runId,

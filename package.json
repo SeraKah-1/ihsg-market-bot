@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "test": "node tests/stance-rules.test.mjs && node tests/shortlist.test.mjs && node tests/schema.test.mjs && node tests/features.test.mjs"
+    "test": "node tests/stance-rules.test.mjs && node tests/shortlist.test.mjs && node tests/schema.test.mjs && node tests/features.test.mjs && node tests/ninerouter-web.test.mjs && node tests/hybrid-web-research.test.mjs"
   },
   "dependencies": {
     "cors-anywhere": "^0.4.4",

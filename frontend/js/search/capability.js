@@ -23,10 +23,10 @@ export function detectSearchMode() {
 
 export function searchModeBanner(mode) {
   if (mode === "FULL") {
-    return "Web search: FULL — native model tools (xAI web_search / Gemini google_search / Responses API)";
+    return "Web: FULL — 9Router /v1/search (+ fetch) → news RSS → native tools if sparse";
   }
   if (mode === "FALLBACK") {
-    return "Web search: FALLBACK — free Google News RSS (+ DDG if available)";
+    return "Web: FALLBACK — 9Router search if available, else free Google News RSS";
   }
-  return "Web search: DEGRADED — no live search. Jangan mengarang katalis berita.";
+  return "Web: DEGRADED — no live search. Jangan mengarang katalis berita.";
 }

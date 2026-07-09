@@ -283,8 +283,11 @@ function extractToolTraces(data) {
 }
 
 /**
- * Hybrid research: native tool search first when mode FULL / auto+capable;
- * always can merge FALLBACK snippets.
+ * Hybrid research (pragmatic order):
+ * 1) 9Router /v1/search via same-origin /api/web/research (when endpoint set)
+ * 2) Free Google News RSS (always fills gaps)
+ * 3) Optional page fetch (deep dive): 9r fetch → free Jina Reader
+ * 4) Optional native model tools only if FULL and still thin (skip if enough hits)
  */
 export async function hybridResearchSearch({
   model,
@@ -292,90 +295,87 @@ export async function hybridResearchSearch({
   searchMode,
   signal,
   onLog,
-  unrestrictedWeb = false
+  unrestrictedWeb = false,
+  fetchPages = false,
+  fetchLimit = 0
 }) {
   loadSettings();
   const results = [];
+  let pages = [];
   let nativeMode = null;
+  let layer = "none";
 
-  const wantNative =
-    searchMode === "FULL" ||
-    (searchMode === "auto" && modelSupportsNativeSearch(model)) ||
-    (searchMode === "FALLBACK" && appSettings.preferNativeSearch && modelSupportsNativeSearch(model));
-
-  // Actually for FALLBACK we keep free news; FULL forces native
-  const useNative = searchMode === "FULL" || (searchMode === "auto" && modelSupportsNativeSearch(model));
-
-  if (useNative && searchMode !== "DEGRADED") {
-    onLog?.(`Native web search via model tools (${model})…`);
-    const system = `You are a financial research agent for Indonesia IDX stocks.
-Use web search tools intensively. Find recent, verifiable facts.
-Return ONLY a JSON object:
-{
-  "findings": [{"claim":"","sourceTier":"official|media|rumor|unknown","url":"","query":""}],
-  "notes": ""
-}`;
-    const user = `Run web searches for these queries and extract findings (max 3 per query):\n${(queries || [])
-      .map((q, i) => `${i + 1}. ${q}`)
-      .join("\n")}`;
-
-    const native = await chatWithNativeWebSearch({
-      model,
-      system,
-      user,
-      signal,
-      isJson: true,
-      unrestrictedWeb
-    });
-    nativeMode = native.mode;
-    if (native.error) onLog?.(`Native search note: ${native.error}`, "warn");
-
-    if (native.content) {
-      try {
-        const parsed = typeof native.content === "string" ? JSON.parse(native.content) : native.content;
-        for (const f of parsed.findings || []) {
-          results.push({
-            title: f.claim || f.title || "",
-            snippet: f.claim || "",
-            url: f.url || "",
-            sourceTier: f.sourceTier || "media",
-            query: f.query || "",
-            provider: "native-tool"
-          });
-        }
-      } catch {
-        // treat as prose blob
-        results.push({
-          title: "native_search_prose",
-          snippet: String(native.content).slice(0, 2000),
-          url: "",
-          sourceTier: "unknown",
-          provider: "native-tool"
-        });
-      }
-    }
-    for (const c of native.citations || []) {
-      results.push({
-        title: c.title,
-        url: c.url,
-        snippet: "",
-        sourceTier: "media",
-        provider: "native-citation"
-      });
-    }
-    onLog?.(
-      `Native search mode=${native.mode} findings=${results.length} tools=${native.toolKind}`
-    );
+  if (searchMode === "DEGRADED") {
+    onLog?.("Search DEGRADED — skip web");
+    return {
+      results: [],
+      pages: [],
+      nativeMode: null,
+      layer: "none",
+      searchModeEffective: "DEGRADED"
+    };
   }
 
-  // FALLBACK free search if native empty or mode FALLBACK or auto hybrid
-  const needFallback =
-    searchMode === "FALLBACK" ||
-    searchMode === "auto" ||
-    (useNative && results.length < 3);
+  // Primary: server research pack (9r search → news; optional fetch)
+  try {
+    let endpoint = "";
+    let apiKey = "";
+    try {
+      const creds = resolveProviderCredentials();
+      endpoint = creds.endpoint;
+      apiKey = creds.apiKey;
+    } catch {
+      onLog?.("No router credentials — free news only", "warn");
+    }
 
-  if (searchMode !== "DEGRADED" && needFallback) {
-    onLog?.("Fallback free news search…");
+    onLog?.(
+      `Web research: 9Router search first → news fallback${fetchPages ? ` → fetch≤${fetchLimit}` : ""}`
+    );
+    const res = await fetch("/api/web/research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint,
+        apiKey,
+        queries: (queries || []).slice(0, 12),
+        max_results: 4,
+        search_type: "news",
+        searchModel: appSettings.searchProvider || null,
+        fetchPages: !!fetchPages && fetchLimit > 0,
+        fetchLimit: fetchLimit || 0,
+        fetchModel: appSettings.fetchProvider || null,
+        max_characters: unrestrictedWeb ? 8000 : 5000
+      }),
+      signal
+    });
+    if (res.ok) {
+      const data = await res.json();
+      layer = data.layer || "none";
+      for (const r of data.results || []) {
+        results.push({
+          title: r.title || "",
+          url: r.url || "",
+          snippet: r.snippet || "",
+          sourceTier: r.sourceTier || "media",
+          provider: r.provider || "web",
+          query: r.query || ""
+        });
+      }
+      pages = data.pages || [];
+      onLog?.(
+        `Web layer=${layer} hits=${results.length} pages=${pages.length}` +
+          (data.errors?.length ? ` err=${data.errors[0]}` : "")
+      );
+    } else {
+      onLog?.(`Web research HTTP ${res.status} — news-only fallback`, "warn");
+    }
+  } catch (e) {
+    onLog?.(`Web research failed: ${e.message || e}`, "warn");
+  }
+
+  // Guarantee free news if still empty
+  if (results.length < 2) {
+    onLog?.("Filling with free news RSS…");
     for (const q of queries || []) {
       if (signal?.aborted) break;
       try {
@@ -391,9 +391,66 @@ Return ONLY a JSON object:
         /* */
       }
     }
+    if (results.length) {
+      layer = layer === "none" ? "news-rss" : layer.includes("news-rss") ? layer : layer + "+news-rss";
+    }
   }
 
-  // dedupe
+  // Optional: native model tools only when FULL and still sparse (avoid overengineering cost)
+  const useNative =
+    searchMode === "FULL" &&
+    results.length < 3 &&
+    model &&
+    modelSupportsNativeSearch(model);
+
+  if (useNative) {
+    onLog?.(`Sparse hits — try native tools (${model})…`);
+    const system = `Financial research agent IDX. Use web search tools. Return JSON only:
+{"findings":[{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":""}]}`;
+    const user = `Search:\n${(queries || []).map((q, i) => `${i + 1}. ${q}`).join("\n")}`;
+    const native = await chatWithNativeWebSearch({
+      model,
+      system,
+      user,
+      signal,
+      isJson: true,
+      unrestrictedWeb
+    });
+    nativeMode = native.mode;
+    if (native.content) {
+      try {
+        const parsed =
+          typeof native.content === "string" ? JSON.parse(native.content) : native.content;
+        for (const f of parsed.findings || []) {
+          results.push({
+            title: f.claim || f.title || "",
+            snippet: f.claim || "",
+            url: f.url || "",
+            sourceTier: f.sourceTier || "media",
+            query: f.query || "",
+            provider: "native-tool"
+          });
+        }
+      } catch {
+        results.push({
+          title: "native_search_prose",
+          snippet: String(native.content).slice(0, 2000),
+          url: "",
+          provider: "native-tool"
+        });
+      }
+    }
+    for (const c of native.citations || []) {
+      results.push({
+        title: c.title,
+        url: c.url,
+        snippet: "",
+        provider: "native-citation"
+      });
+    }
+    if (results.length) layer = layer === "none" ? "native-tools" : layer + "+native";
+  }
+
   const seen = new Set();
   const deduped = results.filter((r) => {
     const k = (r.url || "") + "|" + (r.title || r.snippet || "").slice(0, 80);
@@ -402,15 +459,19 @@ Return ONLY a JSON object:
     return true;
   });
 
+  const effective =
+    searchMode === "DEGRADED"
+      ? "DEGRADED"
+      : layer.includes("9r-search") || layer.includes("native")
+        ? "FULL"
+        : "FALLBACK";
+
   return {
     results: deduped,
+    pages,
     nativeMode,
-    searchModeEffective:
-      useNative && nativeMode && nativeMode !== "NATIVE_FAILED"
-        ? "FULL"
-        : searchMode === "DEGRADED"
-          ? "DEGRADED"
-          : "FALLBACK"
+    layer,
+    searchModeEffective: effective
   };
 }
 
