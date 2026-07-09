@@ -117,7 +117,7 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.deepStrictEqual(filtered.tools[0].filters.allowed_domains, IDX_SEARCH_DOMAINS);
 }
 
-// Docs-minimal Responses body: model + input + tools only (no reasoning/temp)
+// Docs-minimal Responses body: model + input + tools + stream:false (no reasoning/temp)
 {
   const body = buildNativeResponsesBody({
     model: "xai/grok-4.5",
@@ -130,14 +130,38 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.strictEqual(body.input[0].role, "user");
   assert.ok(body.input[0].content.includes("What is IHSG?"));
   assert.deepStrictEqual(body.tools, [{ type: "web_search" }]);
+  assert.strictEqual(body.stream, false);
   assert.strictEqual(body.temperature, undefined);
   assert.strictEqual(body.reasoning, undefined);
   assert.strictEqual(body.reasoning_effort, undefined);
-  assert.strictEqual(Object.keys(body).sort().join(","), "input,model,tools");
+  assert.strictEqual(Object.keys(body).sort().join(","), "input,model,stream,tools");
 
   assert.strictEqual(buildResponsesUrl("https://api.x.ai/v1"), "https://api.x.ai/v1/responses");
   assert.strictEqual(buildResponsesUrl("https://my.router.com"), "https://my.router.com/v1/responses");
   assert.strictEqual(buildResponsesUrl("https://my.router.com/v1/"), "https://my.router.com/v1/responses");
+}
+
+// SSE parse (custom router stream body that broke res.json())
+{
+  const { parseResponsesPayload, looksLikeSse } = await import(nativeUrl);
+  const sse = `event: response.created
+data: {"type":"response.created","response":{"id":"r1","object":"response"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"{\\"findings\\":["}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"{\\"claim\\":\\"IHSG down\\"}]}}"}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"r1","output_text":"{\\"findings\\":[{\\"claim\\":\\"IHSG down\\",\\"url\\":\\"https://x.test\\"}]}","citations":[{"url":"https://x.test","title":"t"}]}}
+
+`;
+  assert.ok(looksLikeSse(sse));
+  const p = parseResponsesPayload(sse);
+  assert.strictEqual(p.via, "sse");
+  assert.ok(p.content.includes("findings") || p.content.includes("IHSG"));
+  assert.ok(p.citations.length >= 1);
 }
 
 // tool cascade has multiple profiles

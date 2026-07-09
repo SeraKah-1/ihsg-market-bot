@@ -108,7 +108,9 @@ export function buildResponsesUrl(endpoint) {
 }
 
 /**
- * Docs-minimal Responses body — model + input + tools only.
+ * Docs-minimal Responses body — model + input + tools + stream:false.
+ * stream:false wajib: banyak custom router default-stream SSE
+ * (`event: response...`) yang bukan JSON object.
  * System prompt digabung ke user content (docs contoh hanya role user).
  */
 export function buildNativeResponsesBody({ model, system, user, tools }) {
@@ -119,7 +121,185 @@ export function buildNativeResponsesBody({ model, system, user, tools }) {
   return {
     model,
     input: [{ role: "user", content }],
-    tools: tools && tools.length ? tools : [{ type: "web_search" }]
+    tools: tools && tools.length ? tools : [{ type: "web_search" }],
+    stream: false
+  };
+}
+
+/**
+ * Detect SSE / event-stream payload (custom routers often stream Responses).
+ */
+export function looksLikeSse(text) {
+  const t = String(text || "").trimStart();
+  if (!t) return false;
+  if (t.startsWith("event:") || t.startsWith("data:")) return true;
+  // mid-stream sample that starts with partial JSON error message context
+  if (/^event:\s*res/i.test(t) || /\nevent:\s*/.test(t.slice(0, 200))) return true;
+  if (t.includes("\ndata:") && (t.includes("event:") || t.includes("response."))) return true;
+  return false;
+}
+
+/**
+ * Parse Responses API body: plain JSON object OR SSE event stream.
+ * Prefer full object from response.completed / response.done when streaming.
+ */
+export function parseResponsesPayload(rawText) {
+  const text = String(rawText || "");
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { data: null, content: "", citations: [], toolTraces: [], via: "empty" };
+  }
+
+  // Plain JSON object
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const data = JSON.parse(trimmed);
+      const parsed = parseResponsesApi(data, false);
+      return { data, ...parsed, via: "json" };
+    } catch (e) {
+      // fall through to SSE / salvage
+    }
+  }
+
+  if (looksLikeSse(text) || trimmed.includes("data:")) {
+    const sse = parseResponsesSse(text);
+    return { ...sse, via: "sse" };
+  }
+
+  // Salvage: first {...} last {...} block
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const data = JSON.parse(trimmed.slice(start, end + 1));
+      const parsed = parseResponsesApi(data, false);
+      return { data, ...parsed, via: "json_salvage" };
+    } catch {
+      /* */
+    }
+  }
+
+  return {
+    data: null,
+    content: "",
+    citations: [],
+    toolTraces: [],
+    via: "unparsed",
+    error: `unparsed_body: ${trimmed.slice(0, 80)}`
+  };
+}
+
+/**
+ * Assemble OpenAI/xAI-style Responses SSE into one logical response.
+ */
+export function parseResponsesSse(rawText) {
+  const events = [];
+  const blocks = String(rawText || "").split(/\n\n+/);
+  for (const block of blocks) {
+    const lines = block.split(/\n/);
+    let eventName = "";
+    const dataLines = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) continue;
+    const dataStr = dataLines.join("\n");
+    if (dataStr === "[DONE]" || dataStr === "DONE") {
+      events.push({ event: eventName || "done", data: null, done: true });
+      continue;
+    }
+    try {
+      events.push({ event: eventName, data: JSON.parse(dataStr) });
+    } catch {
+      events.push({ event: eventName, data: dataStr, raw: true });
+    }
+  }
+
+  let finalResponse = null;
+  let textParts = [];
+  const citations = [];
+  const toolTraces = [];
+
+  for (const ev of events) {
+    const d = ev.data;
+    if (!d || typeof d !== "object") continue;
+    const type = ev.event || d.type || "";
+
+    // Full response envelopes
+    if (
+      type === "response.completed" ||
+      type === "response.done" ||
+      type.endsWith("response.completed")
+    ) {
+      finalResponse = d.response || d;
+    }
+    if (d.response && (d.response.output || d.response.output_text || d.response.citations)) {
+      finalResponse = d.response;
+    }
+    // Some gateways send the whole response as data without event name
+    if (!finalResponse && (d.output || d.output_text) && (d.id || d.object === "response")) {
+      finalResponse = d;
+    }
+
+    // Text deltas
+    if (
+      type === "response.output_text.delta" ||
+      type === "response.text.delta" ||
+      type.includes("output_text.delta")
+    ) {
+      const delta = d.delta ?? d.text ?? d.content ?? "";
+      if (delta) textParts.push(typeof delta === "string" ? delta : String(delta));
+    }
+    if (type === "response.output_text.done" && d.text) {
+      textParts = [d.text];
+    }
+    // Chat-completions-like chunks nested in responses stream
+    if (d.choices?.[0]?.delta?.content) {
+      textParts.push(d.choices[0].delta.content);
+    }
+    if (Array.isArray(d.citations)) {
+      for (const c of d.citations) {
+        citations.push({
+          title: c.title || c.url || "",
+          url: typeof c === "string" ? c : c.url || "",
+          sourceTier: "media"
+        });
+      }
+    }
+  }
+
+  if (finalResponse) {
+    const parsed = parseResponsesApi(finalResponse, false);
+    // merge any delta text if output_text empty
+    if (!parsed.content && textParts.length) {
+      parsed.content = textParts.join("");
+    }
+    // merge citations
+    const seen = new Set(parsed.citations.map((c) => c.url || c.title));
+    for (const c of citations) {
+      const k = c.url || c.title;
+      if (k && !seen.has(k)) {
+        seen.add(k);
+        parsed.citations.push(c);
+      }
+    }
+    return {
+      data: finalResponse,
+      content: parsed.content,
+      citations: parsed.citations,
+      toolTraces: parsed.toolTraces.length ? parsed.toolTraces : toolTraces,
+      events: events.length
+    };
+  }
+
+  const content = textParts.join("");
+  return {
+    data: null,
+    content,
+    citations,
+    toolTraces,
+    events: events.length
   };
 }
 
@@ -197,6 +377,7 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
 
   const headers = {
     "Content-Type": "application/json",
+    Accept: "application/json",
     Authorization: `Bearer ${apiKey}`,
     "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
     "X-Title": "IHSG Market Bot"
@@ -215,33 +396,35 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
       signal
     });
 
+    const rawText = await res.text();
+
     if (!res.ok) {
-      const t = await res.text();
       return {
         content: "",
         citations: [],
         toolTraces: [],
         mode: "NATIVE_FAILED",
-        error: `responses ${res.status}: ${t.slice(0, 320)}`,
+        error: `responses ${res.status}: ${rawText.slice(0, 320)}`,
         toolKind,
         ok: false,
         requestUrl: url.replace(/\?.*$/, "")
       };
     }
 
-    const data = await res.json();
-    const parsed = parseResponsesApi(data, false);
+    const parsed = parseResponsesPayload(rawText);
     // Success if we have text OR citations from server-side web_search
     if (parsed.content || (parsed.citations && parsed.citations.length)) {
-      let content = parsed.content || "";
       return {
-        ...parsed,
-        content,
-        mode: "NATIVE_RESPONSES",
+        content: parsed.content || "",
+        citations: parsed.citations || [],
+        toolTraces: parsed.toolTraces || [],
+        raw: parsed.data,
+        mode: parsed.via === "sse" ? "NATIVE_RESPONSES_SSE" : "NATIVE_RESPONSES",
         toolKind,
         reasoningEffort: null,
         ok: true,
-        requestUrl: url.replace(/\?.*$/, "")
+        requestUrl: url.replace(/\?.*$/, ""),
+        parseVia: parsed.via
       };
     }
 
@@ -250,10 +433,14 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
       citations: parsed.citations || [],
       toolTraces: parsed.toolTraces || [],
       mode: "NATIVE_FAILED",
-      error: "responses_empty_output",
+      error:
+        parsed.error ||
+        (looksLikeSse(rawText)
+          ? "responses_sse_empty (stream parsed, no text/citations)"
+          : "responses_empty_output"),
       toolKind,
       ok: false,
-      raw: data
+      raw: parsed.data || rawText.slice(0, 500)
     };
   } catch (e) {
     if (signal?.aborted) throw e;
