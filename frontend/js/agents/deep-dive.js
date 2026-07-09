@@ -3,7 +3,7 @@
  * Agentic native web tools + reasoning (model milih query sendiri).
  * Fallback: news/Jina search pack + chatJson tanpa tools (no page fetch).
  */
-import { chatJson, modelFor, extractJson, DEFAULT_TEMP } from "../ai.js";
+import { chatJson, modelFor, parseJsonLoose, salvageFindingsFromText, DEFAULT_TEMP } from "../ai.js";
 import { GLOBAL_RULES } from "./constitution.js";
 import { modelSupportsNativeSearch } from "../search/native-search.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
@@ -304,13 +304,38 @@ export async function runDeepDiveAgent({
       finalSchemaHint: "Schema deep_dive (JSON):\n" + schema
     });
 
-    if (agentic.content && agentic.mode !== "NATIVE_FAILED") {
+    if ((agentic.content || agentic.citations?.length) && agentic.mode !== "NATIVE_FAILED") {
       try {
-        const raw =
-          typeof agentic.content === "string"
-            ? extractJson(agentic.content)
-            : JSON.stringify(agentic.content);
-        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        let parsed =
+          typeof agentic.content === "object" && agentic.content
+            ? agentic.content
+            : parseJsonLoose(agentic.content);
+
+        if (!parsed) {
+          const salvaged = salvageFindingsFromText(agentic.content);
+          for (const f of salvaged) {
+            searchResults.push({
+              title: f.claim,
+              snippet: f.claim,
+              url: f.url,
+              provider: "agentic-salvage"
+            });
+          }
+          for (const c of agentic.citations || []) {
+            searchResults.push({
+              title: c.title,
+              url: c.url,
+              snippet: "",
+              provider: "native-citation"
+            });
+          }
+          onLog?.(
+            `Deep dive agentic non-JSON → salvage hits=${salvaged.length + (agentic.citations || []).length}`,
+            "warn"
+          );
+          throw new Error("non_json_salvaged");
+        }
+
         // reject intermediate-only payload
         if (parsed.status === "continue" && !parsed.company && !parsed.forecast) {
           throw new Error("intermediate_only");
@@ -349,9 +374,10 @@ export async function runDeepDiveAgent({
           });
         }
       } catch (e) {
-        onLog?.(`Parse agentic gagal (${e.message}) — fallback pack`, "warn");
-        // stash prose as search note
-        if (agentic.content) {
+        if (e.message !== "non_json_salvaged") {
+          onLog?.(`Parse agentic gagal (${e.message}) — fallback pack`, "warn");
+        }
+        if (agentic.content && e.message !== "non_json_salvaged") {
           searchResults = [
             ...searchResults,
             {
@@ -367,12 +393,14 @@ export async function runDeepDiveAgent({
           ];
         }
         for (const c of agentic.citations || []) {
-          searchResults.push({
-            title: c.title,
-            url: c.url,
-            snippet: "",
-            provider: "native-citation"
-          });
+          if (!searchResults.some((r) => r.url && r.url === c.url)) {
+            searchResults.push({
+              title: c.title,
+              url: c.url,
+              snippet: "",
+              provider: "native-citation"
+            });
+          }
         }
       }
     } else {

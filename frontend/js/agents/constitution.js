@@ -55,6 +55,10 @@ Cara kerja:
 - sourceTier: official|media|rumor|unknown.
 - Jangan mengarang filing. Kalau kosong, bilang kosong.
 
+OUTPUT (wajib):
+- HANYA JSON valid murni. Bukan HTML. Bukan dump "html <web_...>". Bukan markdown fence.
+- Hasil web_search digodok ke field findings/catalysts — jangan paste raw page HTML.
+
 ` +
     VOICE_EXTRA
   );

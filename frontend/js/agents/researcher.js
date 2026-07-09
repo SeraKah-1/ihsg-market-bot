@@ -2,7 +2,13 @@
  * Researcher agent — decides what to search + runs native web_search (agentic).
  * Fallback: hybrid Jina/news with seed queries from hard data.
  */
-import { chatJson, modelFor, extractJson, DEFAULT_TEMP } from "../ai.js";
+import {
+  chatJson,
+  modelFor,
+  parseJsonLoose,
+  salvageFindingsFromText,
+  DEFAULT_TEMP
+} from "../ai.js";
 import { researcherSystem } from "./constitution.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
 import {
@@ -136,13 +142,50 @@ export async function runResearcher({
       finalSchemaHint: researchPackSchema()
     });
 
-    if (agentic.mode !== "NATIVE_FAILED" && agentic.content) {
-      try {
-        const parsed =
-          typeof agentic.content === "string"
-            ? JSON.parse(extractJson(agentic.content))
-            : agentic.content;
-        // fold findings into flat list if missing
+    if (agentic.mode !== "NATIVE_FAILED" && (agentic.content || agentic.citations?.length)) {
+      let parsed =
+        typeof agentic.content === "object" && agentic.content
+          ? agentic.content
+          : parseJsonLoose(agentic.content);
+
+      // Model dumped html <web_...> / prose — salvage findings, don't hard-fail
+      if (!parsed) {
+        const salvaged = salvageFindingsFromText(agentic.content);
+        const fromCites = (agentic.citations || []).map((c) => ({
+          claim: c.title || c.url || "",
+          url: c.url || "",
+          sourceTier: "media",
+          query: ""
+        }));
+        const findings = [...fromCites, ...salvaged];
+        if (findings.length) {
+          onLog?.(
+            `Researcher agentic non-JSON (html/web dump) → salvage findings=${findings.length}`,
+            "warn"
+          );
+          parsed = {
+            marketNotes: findings.slice(0, 8).map((f) => ({
+              claim: f.claim,
+              url: f.url,
+              sourceTier: f.sourceTier || "media"
+            })),
+            findings,
+            hotTakes: [],
+            macroNote: "Dari dump web search (bukan JSON bersih) — cek ulang di Analysis.",
+            macroOutlookTag: "biasa",
+            perTicker: {},
+            unexplainedMarket: ["agentic_output_not_json"],
+            searchPlan: ["(model return non-JSON; findings di-salvage)"]
+          };
+        } else {
+          onLog?.(
+            "Researcher agentic parse gagal: no JSON & no salvageable findings → hybrid",
+            "warn"
+          );
+        }
+      }
+
+      if (parsed) {
         if (!parsed.findings?.length && agentic.citations?.length) {
           parsed.findings = agentic.citations.map((c) => ({
             claim: c.title || "",
@@ -152,16 +195,16 @@ export async function runResearcher({
           }));
         }
         onLog?.(
-          `Researcher OK agentic rounds=${agentic.rounds} reason=${agentic.reasoningEffort || "off"} cites=${(agentic.citations || []).length}`
+          `Researcher OK agentic rounds=${agentic.rounds} reason=${agentic.reasoningEffort || "off"} cites=${(agentic.citations || []).length} findings=${(parsed.findings || []).length}`
         );
         return normalizeResearch(parsed, shortlistPack, {
-          mode: "agentic_native",
+          mode: parsed.unexplainedMarket?.includes?.("agentic_output_not_json")
+            ? "agentic_salvage"
+            : "agentic_native",
           reasoningEffort: agentic.reasoningEffort,
           rounds: agentic.rounds,
           citations: agentic.citations
         });
-      } catch (e) {
-        onLog?.("Researcher agentic parse gagal: " + e.message, "warn");
       }
     } else {
       onLog?.(`Researcher native gagal → hybrid: ${agentic.error || "—"}`, "warn");

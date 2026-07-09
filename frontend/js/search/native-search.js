@@ -10,14 +10,23 @@
  * - Tool profile cascade (bare web_search first)
  * - Outer hybrid: native → Jina search → Google News RSS
  */
-import { resolveProviderCredentials, getProxyUrl, extractJson, modelFor, DEFAULT_TEMP } from "../ai.js";
+import {
+  resolveProviderCredentials,
+  getProxyUrl,
+  extractJson,
+  parseJsonLoose,
+  modelFor,
+  DEFAULT_TEMP
+} from "../ai.js";
 import { appSettings, loadSettings } from "../state.js";
 import {
   injectReasoningParams,
   preferredReasoningEffort,
   reasoningEffortCascade,
   shouldDropReasoningLevel,
-  shouldTryNextToolProfile
+  shouldTryNextToolProfile,
+  resolveTemperature,
+  shouldDropTemperature
 } from "./reasoning.js";
 
 /** IDX / ID finance domains — xAI allows max 5 allowed_domains */
@@ -134,9 +143,11 @@ export function buildNativeResponsesBody({
     model,
     input: [{ role: "user", content }],
     tools: tools && tools.length ? tools : [{ type: "web_search" }],
-    stream: false,
-    temperature: temperature == null ? DEFAULT_TEMP : temperature
+    stream: false
   };
+  // null = omit (o-series / rejected by gateway). number = set.
+  const temp = resolveTemperature(model, temperature, { tools: true });
+  if (temp != null && !Number.isNaN(temp)) body.temperature = temp;
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
   return body;
 }
@@ -520,12 +531,17 @@ export async function chatWithNativeWebSearch({
   const efforts = reasoningEffortCascade(preferred ?? "high");
   const attempts = [];
   let last = null;
-  const temp = temperature == null ? DEFAULT_TEMP : temperature;
+  // temp cascade: resolved value → omit (null) if gateway rejects temperature
+  let tempPref = temperature == null ? DEFAULT_TEMP : temperature;
+  let forceOmitTemp = false;
 
   for (const profile of toolProfiles) {
     for (const effort of efforts) {
+      const temp = forceOmitTemp
+        ? null
+        : resolveTemperature(model, tempPref, { tools: true });
       onLog?.(
-        `Native Responses tools=${profile.kind} reason=${effort || "off"} temp=${temp}`
+        `Native Responses tools=${profile.kind} reason=${effort || "off"} temp=${temp == null ? "omit" : temp}`
       );
       const result = await attemptNativeOnce({
         model,
@@ -541,17 +557,24 @@ export async function chatWithNativeWebSearch({
       attempts.push({
         tools: profile.kind,
         reasoning: effort || "off",
+        temperature: temp == null ? "omit" : temp,
         ok: !!result.ok,
         error: result.error || null
       });
 
       if (result.ok && (result.content || result.citations?.length)) {
         let content = result.content || "";
+        // Keep raw string; callers use parseJsonLoose. Only normalize if pure JSON extract works.
         if (isJson && content) {
-          try {
-            content = extractJson(content);
-          } catch {
-            /* keep raw */
+          const loose = parseJsonLoose(content);
+          if (loose) content = JSON.stringify(loose);
+          else {
+            // leave raw for salvage (html <web_...> dumps)
+            try {
+              content = extractJson(content);
+            } catch {
+              /* keep raw */
+            }
           }
         }
         return {
@@ -559,6 +582,7 @@ export async function chatWithNativeWebSearch({
           content,
           mode: result.mode || "NATIVE_RESPONSES",
           reasoningEffort: effort || null,
+          temperature: temp,
           cascadeAttempts: attempts
         };
       }
@@ -575,6 +599,12 @@ export async function chatWithNativeWebSearch({
           reasoningEffort: effort || null,
           cascadeAttempts: attempts
         };
+      }
+      if (!forceOmitTemp && shouldDropTemperature(err)) {
+        onLog?.("temperature ditolak gateway → omit temp, retry");
+        forceOmitTemp = true;
+        // retry same effort without temp
+        continue;
       }
       // Drop reasoning level on param reject; else try next effort then next tool
       if (effort && shouldDropReasoningLevel(err)) {

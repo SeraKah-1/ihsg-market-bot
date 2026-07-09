@@ -7,7 +7,9 @@ import {
   injectReasoningParams,
   preferredReasoningEffort,
   reasoningEffortCascade,
-  shouldDropReasoningLevel
+  shouldDropReasoningLevel,
+  resolveTemperature,
+  shouldDropTemperature
 } from "./search/reasoning.js";
 
 loadSettings();
@@ -40,14 +42,153 @@ export function resolveProviderCredentials() {
   };
 }
 
+/**
+ * Strip fences / noise and extract a JSON object/array substring (best effort).
+ * Returns string; may still be invalid — prefer parseJsonLoose().
+ */
 export function extractJson(text) {
-  if (!text) return text;
+  if (text == null) return text;
+  if (typeof text === "object") return JSON.stringify(text);
   let s = String(text).trim();
-  s = s.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
+  // strip BOM / zero-width
+  s = s.replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+  // markdown fences (anywhere)
+  s = s.replace(/```(?:json|JSON)?\s*/g, "").replace(/```/g, "").trim();
+  // model sometimes dumps "html <web_...>" prefixes before JSON
+  s = s.replace(/^html\s*/i, "").trim();
+  // strip leading citation/tool tags like <web_search> or <web:1>
+  s = s.replace(/^<web[_a-z0-9:.-]*>\s*/i, "").trim();
+
+  // Prefer balanced {...} or [...]
+  const obj = extractBalancedJson(s, "{", "}");
+  if (obj) return obj;
+  const arr = extractBalancedJson(s, "[", "]");
+  if (arr) return arr;
+
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
-  if (start >= 0 && end > start) s = s.slice(start, end + 1);
+  if (start >= 0 && end > start) return s.slice(start, end + 1);
   return s;
+}
+
+/**
+ * Extract first balanced JSON object/array by brace matching (handles nested).
+ */
+export function extractBalancedJson(text, openCh = "{", closeCh = "}") {
+  const s = String(text || "");
+  const start = s.indexOf(openCh);
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) {
+        esc = false;
+      } else if (c === "\\") {
+        esc = true;
+      } else if (c === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      continue;
+    }
+    if (c === openCh) depth++;
+    else if (c === closeCh) {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Parse model output that may be polluted with HTML / web_ tags / fences.
+ * @returns {object|array|null}
+ */
+export function parseJsonLoose(text) {
+  if (text == null || text === "") return null;
+  if (typeof text === "object") return text;
+
+  const candidates = [];
+  const raw = String(text);
+  candidates.push(extractJson(raw));
+
+  // try each {...} block if multiple
+  const re = /\{[\s\S]*?\}/g;
+  let m;
+  let n = 0;
+  while ((m = re.exec(raw)) && n < 8) {
+    candidates.push(m[0]);
+    n++;
+  }
+  // longer balanced object first
+  const bal = extractBalancedJson(raw, "{", "}");
+  if (bal) candidates.unshift(bal);
+
+  const seen = new Set();
+  for (const c of candidates) {
+    if (!c || seen.has(c)) continue;
+    seen.add(c);
+    try {
+      return JSON.parse(c);
+    } catch {
+      /* try next */
+    }
+    // trailing comma / soft fix
+    try {
+      const soft = String(c)
+        .replace(/,\s*([}\]])/g, "$1")
+        .replace(/'/g, '"');
+      return JSON.parse(soft);
+    } catch {
+      /* */
+    }
+  }
+  return null;
+}
+
+/**
+ * If model dumped HTML / web snippets instead of JSON, pull claim-like findings.
+ */
+export function salvageFindingsFromText(text) {
+  const s = String(text || "");
+  if (!s.trim()) return [];
+  const findings = [];
+  const urlRe = /https?:\/\/[^\s"'<>)\]]+/gi;
+  const urls = [...new Set((s.match(urlRe) || []).map((u) => u.replace(/[.,;]+$/, "")))];
+  for (const url of urls.slice(0, 20)) {
+    // grab nearby text window as claim
+    const idx = s.indexOf(url);
+    const window = s.slice(Math.max(0, idx - 120), Math.min(s.length, idx + url.length + 80));
+    const claim = window
+      .replace(url, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 220);
+    findings.push({
+      claim: claim || url,
+      url,
+      sourceTier: "media",
+      query: ""
+    });
+  }
+  // title-ish lines if no urls
+  if (!findings.length) {
+    const lines = s
+      .split(/\n+/)
+      .map((l) => l.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
+      .filter((l) => l.length > 40 && l.length < 280 && !/^html\b/i.test(l));
+    for (const line of lines.slice(0, 12)) {
+      findings.push({ claim: line, url: "", sourceTier: "unknown", query: "" });
+    }
+  }
+  return findings;
 }
 
 /**
@@ -68,9 +209,12 @@ async function chatCompleteOnce({
   const body = {
     model,
     messages,
-    temperature: temperature == null ? DEFAULT_TEMP : temperature,
     stream: false
   };
+  const temp = resolveTemperature(model, temperature == null ? DEFAULT_TEMP : temperature, {
+    tools: false
+  });
+  if (temp != null) body.temperature = temp;
   if (isJson) body.response_format = { type: "json_object" };
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
 
@@ -120,28 +264,47 @@ export async function chatComplete({
   const preferred = preferredReasoningEffort(model, reasoningEffort);
   const efforts = reasoningEffortCascade(preferred ?? "high");
   let lastErr = null;
+  let temp = temperature == null ? DEFAULT_TEMP : temperature;
+  let triedOmitTemp = false;
 
   for (const effort of efforts) {
     try {
       onLog?.(
-        `chatComplete model=${model} temp=${temperature} reason=${effort || "off"}`
+        `chatComplete model=${model} temp=${temp == null ? "omit" : temp} reason=${effort || "off"}`
       );
       return await chatCompleteOnce({
         model,
         messages,
         isJson,
         signal,
-        temperature,
+        temperature: temp,
         reasoningEffort: effort
       });
     } catch (e) {
       lastErr = e;
       if (signal?.aborted) throw e;
+      if (!triedOmitTemp && shouldDropTemperature(e)) {
+        onLog?.("temperature ditolak → omit, retry");
+        temp = null;
+        triedOmitTemp = true;
+        // retry same effort without temp
+        try {
+          return await chatCompleteOnce({
+            model,
+            messages,
+            isJson,
+            signal,
+            temperature: null,
+            reasoningEffort: effort
+          });
+        } catch (e2) {
+          lastErr = e2;
+        }
+      }
       if (shouldDropReasoningLevel(e) && effort) {
         onLog?.(`reason=${effort} ditolak → turun cascade: ${String(e.message || e).slice(0, 120)}`);
         continue;
       }
-      // non-reasoning error — don't spin the whole cascade unless 400-ish
       if (effort && /400|422|unknown|unrecognized|parameter/i.test(String(e.message || e))) {
         continue;
       }

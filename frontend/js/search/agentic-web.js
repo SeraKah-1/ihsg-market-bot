@@ -2,7 +2,7 @@
  * Agentic native web research — multi-round Responses API web_search.
  * Reasoning cascade + temperature per round.
  */
-import { extractJson, DEFAULT_TEMP } from "../ai.js";
+import { parseJsonLoose, DEFAULT_TEMP } from "../ai.js";
 import { chatWithNativeWebSearch, modelSupportsNativeSearch, detectNativeSearchTool } from "./native-search.js";
 
 /**
@@ -144,15 +144,10 @@ Jika sudah cukup, status=done.`);
     for (const c of result.citations || []) allCitations.push(c);
     for (const t of result.toolTraces || []) allTraces.push(t);
 
-    let parsed = null;
-    try {
-      parsed =
-        typeof result.content === "string"
-          ? JSON.parse(extractJson(result.content))
-          : result.content;
-    } catch {
-      parsed = null;
-    }
+    let parsed =
+      typeof result.content === "object" && result.content
+        ? result.content
+        : parseJsonLoose(result.content);
 
     searchLog.push({
       round,

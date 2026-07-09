@@ -25,8 +25,14 @@ const {
   injectReasoningParams,
   reasoningEffortCascade,
   shouldDropReasoningLevel,
-  shouldTryNextToolProfile
+  shouldTryNextToolProfile,
+  modelOmitsTemperature,
+  resolveTemperature,
+  shouldDropTemperature
 } = await import(reasoningUrl);
+
+const aiUrl = pathToFileURL(path.join(root, "frontend/js/ai.js")).href;
+const { parseJsonLoose, salvageFindingsFromText, extractJson } = await import(aiUrl);
 
 const {
   modelSupportsNativeSearch,
@@ -117,6 +123,32 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.deepStrictEqual(filtered.tools[0].filters.allowed_domains, IDX_SEARCH_DOMAINS);
 }
 
+// Temperature policy (frontier)
+assert.strictEqual(modelOmitsTemperature("o3"), true);
+assert.strictEqual(modelOmitsTemperature("o4-mini"), true);
+assert.strictEqual(modelOmitsTemperature("xai/grok-4.5"), false);
+assert.strictEqual(resolveTemperature("o3", 0.65), null);
+assert.strictEqual(resolveTemperature("gemini-2.0-flash", 0.65, { tools: true }), 1.0);
+assert.strictEqual(resolveTemperature("xai/grok-4.5", 0.65, { tools: true }), 0.65);
+assert.strictEqual(resolveTemperature("xai/grok-4.5", null), null);
+assert.ok(shouldDropTemperature("Unsupported parameter: temperature"));
+
+// parse polluted agentic dumps (html <web_...>)
+{
+  const dirty = `html <web_search>
+Some news about IHSG https://example.com/ihsg-drop
+{"findings":[{"claim":"IHSG turun","url":"https://example.com/a","sourceTier":"media"}],"perTicker":{}}
+`;
+  const p = parseJsonLoose(dirty);
+  assert.ok(p && p.findings && p.findings[0].claim.includes("IHSG"));
+  const noJson = `html <web_search> foo https://kontan.co.id/news/1 bar`;
+  assert.strictEqual(parseJsonLoose(noJson), null);
+  const salv = salvageFindingsFromText(noJson);
+  assert.ok(salv.length >= 1);
+  assert.ok(salv[0].url.includes("kontan"));
+  assert.ok(extractJson('```json\n{"a":1}\n```').includes('"a"'));
+}
+
 // Responses body: model + input + tools + stream:false + temperature; reasoning optional
 {
   const body = buildNativeResponsesBody({
@@ -134,6 +166,15 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.ok(typeof body.temperature === "number" && body.temperature > 0);
   assert.strictEqual(body.reasoning, undefined);
   assert.strictEqual(body.reasoning_effort, undefined);
+
+  const o3body = buildNativeResponsesBody({
+    model: "o3-mini",
+    system: "s",
+    user: "u",
+    tools: [{ type: "web_search" }],
+    temperature: 0.65
+  });
+  assert.strictEqual(o3body.temperature, undefined);
 
   const withReason = buildNativeResponsesBody({
     model: "xai/grok-4.5",

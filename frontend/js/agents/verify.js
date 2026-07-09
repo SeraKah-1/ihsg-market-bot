@@ -1,7 +1,7 @@
 /**
  * Verify agent — pragmatic skeptic, optional web_search for clarification.
  */
-import { chatJson, modelFor, extractJson, DEFAULT_TEMP } from "../ai.js";
+import { chatJson, modelFor, parseJsonLoose, DEFAULT_TEMP } from "../ai.js";
 import { verifySystem } from "./constitution.js";
 import { chatWithNativeWebSearch, modelSupportsNativeSearch } from "../search/native-search.js";
 import {
@@ -53,25 +53,24 @@ Search max 3 query paling kritis. Jangan overhate.`,
       onLog
     });
     if (native.ok !== false && native.content) {
-      try {
-        const p =
-          typeof native.content === "string"
-            ? JSON.parse(extractJson(native.content))
-            : native.content;
-        clarifyHits = p.clarifications || [];
+      const p =
+        typeof native.content === "object" && native.content
+          ? native.content
+          : parseJsonLoose(native.content);
+      if (p?.clarifications) {
+        clarifyHits = p.clarifications;
         onLog?.(
           `Verify web clarifications=${clarifyHits.length} reason=${native.reasoningEffort || "off"}`
         );
-      } catch {
-        if (String(native.content).length > 40) {
-          clarifyHits = [
-            {
-              hole: "raw",
-              claim: String(native.content).slice(0, 800),
-              sourceTier: "media"
-            }
-          ];
-        }
+      } else if (String(native.content).length > 40) {
+        clarifyHits = [
+          {
+            hole: "raw",
+            claim: String(native.content).slice(0, 800),
+            sourceTier: "media"
+          }
+        ];
+        onLog?.("Verify web non-JSON — simpan raw claim", "warn");
       }
     } else {
       onLog?.(`Verify web skip/fail: ${native.error || "—"}`, "warn");

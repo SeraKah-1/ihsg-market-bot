@@ -124,4 +124,53 @@ export function shouldTryNextToolProfile(err) {
   return false;
 }
 
+/**
+ * Models that reject non-default temperature (OpenAI o-series / GPT-5 reasoning).
+ * Docs/community: temperature unsupported or only default=1 allowed.
+ */
+export function modelOmitsTemperature(model) {
+  const m = String(model || "").toLowerCase();
+  if (!m) return false;
+  if (/\bo1\b|\bo3\b|\bo4\b|o1-|o3-|o4-|o1_|o3_|o4_/.test(m)) return true;
+  if (/gpt-5|gpt5/.test(m) && !/gpt-5-chat|gpt-4/.test(m)) return true;
+  // pure reasoning SKUs often reject sampling knobs
+  if (/(^|\/)(o3|o4|o1)(-|$)/.test(m)) return true;
+  return false;
+}
+
+/**
+ * Resolve temperature for request body.
+ * - null → omit field (reasoning models / docs-minimal tool calls)
+ * - Gemini + search tools → 1.0 (Google grounding guidance)
+ * - else preferred (default product 0.65)
+ */
+export function resolveTemperature(model, preferred = 0.65, { tools = false } = {}) {
+  // explicit omit (null / "omit") always wins — cascade after gateway reject
+  if (preferred === "omit" || preferred === false || preferred == null) return null;
+  if (modelOmitsTemperature(model)) return null;
+  const m = String(model || "").toLowerCase();
+  // Gemini grounding docs: temperature 1.0 ideal with Google Search
+  if (tools && (m.includes("gemini") || m.includes("google/"))) {
+    return 1.0;
+  }
+  const n = Number(preferred);
+  return Number.isFinite(n) ? n : 0.65;
+}
+
+/** API rejected temperature — retry without it */
+export function shouldDropTemperature(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("temperature") &&
+    (msg.includes("unsupported") ||
+      msg.includes("not support") ||
+      msg.includes("invalid") ||
+      msg.includes("unknown") ||
+      msg.includes("only the default") ||
+      msg.includes("400") ||
+      msg.includes("422"))
+  );
+}
+
 export { isThinkingConfigError, buildThinkingLevelCascade };
