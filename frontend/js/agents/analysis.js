@@ -144,9 +144,9 @@ export async function runAnalysis({
       user: userStr,
       signal,
       temperature: null,
-      // Writer that works uses medium — high hangs 120s on router
-      reasoningEffort: "medium",
-      timeoutMs: 100_000,
+      // Cognitive Sandbox pattern: stream + no forced high reasoning on plain Grok
+      reasoningEffort: "off",
+      timeoutMs: 180_000,
       onLog
     });
     onLog?.(

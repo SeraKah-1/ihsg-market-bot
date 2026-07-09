@@ -114,9 +114,9 @@ export async function runWriter({
       user: userStr,
       signal,
       temperature: null,
-      // medium first — faster than high cascade for pure prose
-      reasoningEffort: "medium",
-      timeoutMs: 90_000,
+      // CS pattern: stream chat, no reasoning hang on plain Grok
+      reasoningEffort: "off",
+      timeoutMs: 150_000,
       onLog
     });
 
