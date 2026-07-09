@@ -12,6 +12,7 @@ import {
   injectReportStylesOnce
 } from "./render-report.js";
 import { deepDiveQueries, runDeepDiveAgent } from "./agents/deep-dive.js";
+import { hybridResearchSearch, researchModel } from "./search/native-search.js";
 
 let abortCtrl = null;
 
@@ -81,14 +82,35 @@ export async function runPipeline({ skipAi = false } = {}) {
     setStatus(`Research ${searchMode}…`, "busy");
 
     let searchResults = [];
+    let searchModeEffective = searchMode;
     if (searchMode !== "DEGRADED") {
-      searchResults = await collectSearch(shortlistPack, signal);
-      logLine(`Search hits: ${searchResults.length}`);
+      const queries = [
+        `IHSG ${shortlistPack.day} penopang pemberat`,
+        ...(shortlistPack.shortlist || [])
+          .slice(0, 6)
+          .flatMap((s) => [
+            `${s.ticker} saham IDX berita`,
+            `${s.ticker} aksi korporasi OR right issue OR buyback`
+          ])
+      ];
+      const hybrid = await hybridResearchSearch({
+        model: researchModel(),
+        queries,
+        searchMode,
+        signal,
+        onLog: logLine,
+        unrestrictedWeb: false
+      });
+      searchResults = hybrid.results;
+      searchModeEffective = hybrid.searchModeEffective || searchMode;
+      logLine(
+        `Search hits: ${searchResults.length} (effective=${searchModeEffective}, native=${hybrid.nativeMode || "—"})`
+      );
     }
 
     const research = await runResearch({
       shortlistPack,
-      searchMode,
+      searchMode: searchModeEffective,
       searchResults,
       memory,
       signal,
@@ -352,32 +374,23 @@ export async function runDeepDive(tickerRaw) {
     setStatus(`Deep dive ${ticker}: search…`, "busy");
 
     let searchResults = [];
+    let searchModeEffective = searchMode;
     if (searchMode !== "DEGRADED") {
       const queries = deepDiveQueries(ticker, marketPack.day);
-      for (const q of queries) {
-        if (signal.aborted) break;
-        try {
-          const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=5", {
-            signal
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-          for (const r of data.results || []) {
-            searchResults.push({ ...r, query: q });
-          }
-        } catch {
-          /* continue */
-        }
-      }
-      // dedupe by url/title
-      const seen = new Set();
-      searchResults = searchResults.filter((r) => {
-        const k = r.url || r.title;
-        if (!k || seen.has(k)) return false;
-        seen.add(k);
-        return true;
+      // Deep dive: unrestricted web for native tools (full internet, not only 5 domains)
+      const hybrid = await hybridResearchSearch({
+        model: researchModel(),
+        queries,
+        searchMode: searchMode === "auto" ? "FULL" : searchMode,
+        signal,
+        onLog: logLine,
+        unrestrictedWeb: true
       });
-      logLine(`Deep search hits: ${searchResults.length} from ${queries.length} queries`);
+      searchResults = hybrid.results;
+      searchModeEffective = hybrid.searchModeEffective || searchMode;
+      logLine(
+        `Deep search hits: ${searchResults.length} queries=${queries.length} effective=${searchModeEffective} native=${hybrid.nativeMode || "—"}`
+      );
     } else {
       logLine("DEGRADED — deep dive tanpa search live", "warn");
     }
@@ -390,7 +403,7 @@ export async function runDeepDive(tickerRaw) {
       ticker,
       marketPack,
       searchResults,
-      searchMode,
+      searchMode: searchModeEffective,
       memory: memJson.items || [],
       runId,
       signal,

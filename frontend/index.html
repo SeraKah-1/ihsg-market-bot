@@ -153,12 +153,15 @@
             <label class="field">
               <span class="field-label">Search mode</span>
               <select id="search-mode">
-                <option value="auto">Auto (news fallback)</option>
-                <option value="FALLBACK">FALLBACK</option>
+                <option value="auto">Auto — native tools if Grok/Gemini/GPT, else news</option>
+                <option value="FULL">FULL — native web_search / google_search</option>
+                <option value="FALLBACK">FALLBACK — free Google News only</option>
                 <option value="DEGRADED">DEGRADED — no search</option>
-                <option value="FULL">FULL — native if available</option>
               </select>
             </label>
+            <p class="fineprint" style="text-align:left;margin:0.35rem 0 0">
+              FULL: xAI <code>web_search</code> / Gemini <code>google_search</code> via router. Auto pilih FULL untuk model xai/grok*.
+            </p>
             <label class="check">
               <input id="force-refresh" type="checkbox" />
               <span>Force refresh cache</span>
@@ -216,6 +219,22 @@
           <span class="kpi-value" id="kpi-lean">—</span>
           <span class="kpi-meta" id="kpi-priority">judge</span>
         </article>
+      </section>
+
+      <section class="block" aria-labelledby="h-universe">
+        <header class="block-head">
+          <div>
+            <p class="eyebrow">Universe</p>
+            <h2 id="h-universe">Daftar emiten</h2>
+          </div>
+          <p class="block-desc">Semua ticker · filter · deep dive per baris</p>
+        </header>
+        <div id="universe-browser" class="surface">
+          <div class="empty-state">
+            <p class="empty-title">Memuat emiten…</p>
+            <p class="empty-body">Atau tekan Fetch tickers di settings.</p>
+          </div>
+        </div>
       </section>
 
       <section class="block" aria-labelledby="h-shortlist">

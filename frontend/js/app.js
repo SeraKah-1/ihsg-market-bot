@@ -2,6 +2,7 @@ import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "
 import { runPipeline, runDeepDive, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
 import { injectReportStylesOnce } from "./render-report.js";
 import { fetchModels } from "./ai.js";
+import { loadUniverseBrowser } from "./universe-browser.js";
 
 const SHELL = () => document.querySelector(".shell");
 const THEME_KEY = "ihsg-theme";
@@ -274,6 +275,7 @@ function init() {
       }
       logLine(`Universe refresh: ${data.count} tickers, removed ${data.meta?.removedCount || 0}`);
       setStatus(`Universe: ${data.count} emiten`, "ok");
+      await loadUniverseBrowser();
     } catch (e) {
       if (st) st.textContent = "Gagal: " + e.message;
       logLine("universe refresh: " + e.message, "err");
@@ -283,14 +285,8 @@ function init() {
     }
   });
 
-  // show current universe count
-  fetch("/api/market/universe")
-    .then((r) => r.json())
-    .then((u) => {
-      const st = $("tickers-status");
-      if (st) st.textContent = `${u.count || u.tickers?.length || "?"} tickers · updated ${u.updated || "?"}`;
-    })
-    .catch(() => {});
+  // universe browser + status
+  loadUniverseBrowser();
 
   const runFull = () =>
     withBusy(["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m"], async () => {
