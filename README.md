@@ -61,10 +61,13 @@ users/{uid}/ihsg_runs/{runId}/agents/{research|analysis|writer|deep_dive}
 users/{uid}/ihsg_compact/{autoId}
 ```
 
-Auth: **Anonymous** (enable in Firebase Console → Authentication → Sign-in method).  
+Auth: **Google Sign-In** (enable Google provider + whitelist domain).  
 Rules: see `firestore.rules` (user-scoped). Deploy to the **market** database.
 
-Fallback: `localStorage` + `POST /api/runs` + `/api/memory/compact` if Firebase auth/rules fail.
+**PWA offline:** `manifest.json` + `sw.js` + IndexedDB (`offline-store.js`).  
+Last briefing cached; incomplete runs → **Resume** button.
+
+Fallback: IndexedDB + `localStorage` + `/api/runs` if cloud offline.
 
 ## Tests
 

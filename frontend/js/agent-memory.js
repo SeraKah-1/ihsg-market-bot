@@ -22,6 +22,15 @@ import {
   getDocs,
   addDoc
 } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+import {
+  idbPutRun,
+  idbGetRun,
+  idbPutStep,
+  idbGetStep,
+  idbListIncompleteRuns,
+  nextStepFromSteps,
+  cacheLastBriefing
+} from "./offline-store.js";
 
 const LOCAL_RUN_PREFIX = "ihsg-run-";
 const LOCAL_MEM_KEY = "ihsg-compact-memory-v1";
@@ -172,24 +181,27 @@ function localLoadRun(runId) {
 }
 
 /**
- * Init Firebase auth for memory bus.
- * @returns {{ ok: boolean, uid: string|null, error?: string }}
+ * Init memory bus — Google session if present; offline IDB always works.
+ * @returns {{ ok: boolean, uid: string|null, needsSignIn?: boolean, error?: string }}
  */
 export async function initAgentMemory(onLog) {
   try {
     const user = await ensureAuth();
     if (user?.uid) {
-      onLog?.(`Firebase memory OK · db=market · uid=${user.uid.slice(0, 8)}…`);
-      return { ok: true, uid: user.uid };
+      const label = user.displayName || user.email || user.uid.slice(0, 8);
+      onLog?.(
+        `Firebase memory OK · db=market · Google=${label} · offline IDB on`
+      );
+      return { ok: true, uid: user.uid, email: user.email || null };
     }
     onLog?.(
-      "Firebase auth gagal (aktifkan Anonymous di Console) → memory lokal + /api saja",
+      "Belum login Google → memory offline (IndexedDB + local). Login untuk sync cloud.",
       "warn"
     );
-    return { ok: false, uid: null, error: "no_auth" };
+    return { ok: false, uid: null, needsSignIn: true, error: "needs_google" };
   } catch (e) {
     onLog?.("Firebase init error: " + (e.message || e), "warn");
-    return { ok: false, uid: null, error: String(e.message || e) };
+    return { ok: false, uid: null, needsSignIn: true, error: String(e.message || e) };
   }
 }
 
@@ -204,15 +216,21 @@ export async function startRunMemory(runId, meta = {}, onLog) {
     status: "running",
     steps: {},
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     ...meta
   };
   localSaveRun(runId, shell);
+  try {
+    await idbPutRun(shell);
+  } catch (e) {
+    onLog?.("IDB run shell: " + e.message, "warn");
+  }
 
   if (!currentUser?.uid) {
     await ensureAuth();
   }
   if (!currentUser?.uid) {
-    onLog?.("Run memory: local only (no Firebase uid)");
+    onLog?.("Run memory: offline IDB/local (no Google uid)");
     return { backend: "local", runId };
   }
 
@@ -237,7 +255,7 @@ export async function startRunMemory(runId, meta = {}, onLog) {
     onLog?.(`Firebase run doc: users/…/ihsg_runs/${runId}`);
     return { backend: "firebase", runId };
   } catch (e) {
-    onLog?.("Firebase run start gagal → local: " + e.message, "warn");
+    onLog?.("Firebase run start gagal → offline: " + e.message, "warn");
     return { backend: "local", runId, error: e.message };
   }
 }
@@ -254,9 +272,20 @@ export async function saveAgentStep(runId, step, payload, onLog) {
     payload: data
   };
 
-  localSaveRun(runId, { [step]: entry, [`${step}At`]: Date.now() });
+  localSaveRun(runId, {
+    [step]: entry,
+    [`${step}At`]: Date.now(),
+    steps: { ...(localLoadRun(runId)?.steps || {}), [step]: true },
+    status: step === "writer" || step === "deep_dive" ? "done" : "running"
+  });
 
-  // server mirror (always)
+  try {
+    await idbPutStep(runId, step, data);
+  } catch (e) {
+    onLog?.(`IDB save [${step}]: ${e.message}`, "warn");
+  }
+
+  // server mirror (always try when online)
   try {
     await fetch("/api/runs", {
       method: "POST",
@@ -269,7 +298,7 @@ export async function saveAgentStep(runId, step, payload, onLog) {
       })
     });
   } catch (e) {
-    /* ignore */
+    /* offline ok */
   }
 
   if (!currentUser?.uid) {
@@ -281,7 +310,7 @@ export async function saveAgentStep(runId, step, payload, onLog) {
   }
 
   if (!currentUser?.uid) {
-    onLog?.(`Memory save [${step}] → local (+ /api)`);
+    onLog?.(`Memory save [${step}] → offline IDB (+ /api if online)`);
     return { backend: "local", step, runId };
   }
 
@@ -300,18 +329,18 @@ export async function saveAgentStep(runId, step, payload, onLog) {
     await updateDoc(runDoc(runId), {
       updatedAt: serverTimestamp(),
       [`steps.${step}`]: true,
-      status: step === "writer" || step === "deep_dive" ? "done_partial" : "running"
+      status: step === "writer" || step === "deep_dive" ? "done" : "running"
     }).catch(() => {});
     onLog?.(`Firebase save agent=${step} · runs/${runId}/agents/${step}`);
     return { backend: "firebase", step, runId };
   } catch (e) {
-    onLog?.(`Firebase save [${step}] gagal → local: ${e.message}`, "warn");
+    onLog?.(`Firebase save [${step}] gagal → offline: ${e.message}`, "warn");
     return { backend: "local", step, runId, error: e.message };
   }
 }
 
 /**
- * Load agent step payload (Firebase first, then local).
+ * Load agent step: Firebase (cached offline) → IDB → localStorage.
  */
 export async function loadAgentStep(runId, step, onLog) {
   if (currentUser?.uid) {
@@ -320,6 +349,12 @@ export async function loadAgentStep(runId, step, onLog) {
       if (snap.exists()) {
         const d = snap.data();
         onLog?.(`Firebase load agent=${step} OK`);
+        // mirror to IDB for pure offline next time
+        try {
+          await idbPutStep(runId, step, d.payload);
+        } catch {
+          /* */
+        }
         return d.payload ?? null;
       }
     } catch (e) {
@@ -327,14 +362,123 @@ export async function loadAgentStep(runId, step, onLog) {
     }
   }
 
+  try {
+    const idb = await idbGetStep(runId, step);
+    if (idb != null) {
+      onLog?.(`Offline IDB load agent=${step} OK`);
+      return idb;
+    }
+  } catch (e) {
+    onLog?.(`IDB load [${step}]: ${e.message}`, "warn");
+  }
+
   const local = localLoadRun(runId);
   if (local?.[step]?.payload) {
-    onLog?.(`Local load agent=${step} OK`);
+    onLog?.(`LocalStorage load agent=${step} OK`);
     return local[step].payload;
   }
   onLog?.(`Memory miss agent=${step}`, "warn");
   return null;
 }
+
+/**
+ * Inspect run progress for resume.
+ */
+export async function getRunProgress(runId, onLog) {
+  let steps = {};
+  let status = "unknown";
+  let meta = {};
+
+  try {
+    const idb = await idbGetRun(runId);
+    if (idb) {
+      steps = { ...(idb.steps || {}) };
+      status = idb.status || status;
+      meta = idb;
+    }
+  } catch {
+    /* */
+  }
+
+  const local = localLoadRun(runId);
+  if (local) {
+    for (const k of ["shortlist", "research", "analysis", "writer", "deep_dive", "market_pack"]) {
+      if (local[k]?.payload || local.steps?.[k]) steps[k] = true;
+    }
+    status = local.status || status;
+    meta = { ...meta, ...local };
+  }
+
+  if (currentUser?.uid) {
+    try {
+      const snap = await getDoc(runDoc(runId));
+      if (snap.exists()) {
+        const d = snap.data();
+        steps = { ...steps, ...(d.steps || {}) };
+        status = d.status || status;
+      }
+    } catch {
+      /* */
+    }
+  }
+
+  // probe steps that exist as docs even if shell incomplete
+  for (const step of ["shortlist", "research", "analysis", "writer"]) {
+    if (steps[step]) continue;
+    const p = await loadAgentStep(runId, step, null);
+    if (p) steps[step] = true;
+  }
+
+  const next = nextStepFromSteps(steps);
+  onLog?.(
+    `Resume progress run=${runId} steps=${Object.keys(steps).join(",") || "—"} next=${next}`
+  );
+  return { runId, steps, status, next, meta };
+}
+
+export async function listResumableRuns(onLog) {
+  try {
+    const list = await idbListIncompleteRuns(10);
+    onLog?.(`Resumable runs offline: ${list.length}`);
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+export async function markRunFailed(runId, errMsg, onLog) {
+  localSaveRun(runId, {
+    status: "failed",
+    lastError: String(errMsg || "").slice(0, 500),
+    updatedAt: Date.now()
+  });
+  try {
+    const prev = (await idbGetRun(runId)) || { runId };
+    await idbPutRun({
+      ...prev,
+      runId,
+      status: "failed",
+      lastError: String(errMsg || "").slice(0, 500),
+      updatedAt: Date.now()
+    });
+  } catch {
+    /* */
+  }
+  if (currentUser?.uid) {
+    try {
+      await updateDoc(runDoc(runId), {
+        status: "failed",
+        lastError: String(errMsg || "").slice(0, 500),
+        updatedAt: serverTimestamp()
+      });
+    } catch {
+      /* */
+    }
+  }
+  onLog?.(`Run ${runId} marked failed — bisa Resume`, "warn");
+}
+
+export { cacheLastBriefing, nextStepFromSteps };
 
 /**
  * Compact day memory (like sandbox topic memory — short rolling context).
@@ -478,8 +622,23 @@ export function buildAgentMemoryContext(priorSteps = {}, compactItems = []) {
 }
 
 export async function finishRunMemory(runId, status = "done", onLog) {
-  localSaveRun(runId, { status, finishedAt: Date.now() });
-  if (!currentUser?.uid) return;
+  localSaveRun(runId, { status, finishedAt: Date.now(), updatedAt: Date.now() });
+  try {
+    const prev = (await idbGetRun(runId)) || { runId };
+    await idbPutRun({
+      ...prev,
+      runId,
+      status,
+      finishedAt: Date.now(),
+      updatedAt: Date.now()
+    });
+  } catch {
+    /* */
+  }
+  if (!currentUser?.uid) {
+    onLog?.(`Offline run ${runId} → ${status}`);
+    return;
+  }
   try {
     await updateDoc(runDoc(runId), {
       status,

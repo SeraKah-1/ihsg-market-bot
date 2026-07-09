@@ -5,7 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <meta name="theme-color" content="#f3efe6" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>IHSG Market · Briefing</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -36,6 +42,36 @@
 <body>
   <a class="skip-link" href="#main-content">Loncat ke konten</a>
 
+  <!-- Google auth gate -->
+  <div id="auth-screen" class="auth-screen hidden" role="dialog" aria-labelledby="auth-title">
+    <div class="auth-card">
+      <div class="brand auth-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div class="brand-text">
+          <span class="brand-name">IHSG Market</span>
+          <span class="brand-sub">Login Google</span>
+        </div>
+      </div>
+      <h1 id="auth-title" class="auth-title">Masuk untuk sync memory</h1>
+      <p class="auth-blurb">
+        Firebase DB <code>market</code> · progress agent disimpan per akun.
+        Offline: shell PWA + briefing terakhir tetap bisa dibuka.
+      </p>
+      <button type="button" class="btn btn-primary btn-block" id="btn-google-signin">
+        Lanjut dengan Google
+      </button>
+      <button type="button" class="btn btn-ghost btn-block" id="btn-continue-offline">
+        Lanjut offline (tanpa sync cloud)
+      </button>
+      <p id="auth-error" class="auth-error hidden" role="alert"></p>
+      <p class="fineprint">
+        Domain harus di-whitelist: Firebase Console → Authentication → Authorized domains
+        (tambah <code>localhost</code> bila dev).
+      </p>
+    </div>
+  </div>
+
+  <div id="app-screen">
   <header class="topbar" role="banner">
     <div class="topbar-left">
       <button type="button" class="icon-btn" id="btn-toggle-nav" aria-expanded="true" aria-controls="side-nav" title="Settings (Ctrl+\\)">
@@ -56,8 +92,14 @@
     </div>
 
     <div class="topbar-actions" role="toolbar" aria-label="Aksi utama">
+      <span id="user-chip" class="user-chip hidden" title="Akun Google">
+        <img id="user-avatar" alt="" width="22" height="22" />
+        <span id="user-name">—</span>
+        <button type="button" class="btn-link" id="btn-signout" title="Keluar">Keluar</button>
+      </span>
       <button type="button" class="btn btn-ghost" id="btn-run-data">Data only</button>
       <button type="button" class="btn btn-primary" id="btn-run">Run briefing</button>
+      <button type="button" class="btn btn-secondary hidden" id="btn-resume" title="Lanjut run yang gagal/putus">Resume</button>
       <button type="button" class="btn btn-danger-ghost" id="btn-abort" aria-label="Abort">Abort</button>
       <div class="divider-v" aria-hidden="true"></div>
       <button type="button" class="btn btn-ghost" id="btn-dl-json">JSON</button>
@@ -68,6 +110,16 @@
       </button>
     </div>
   </header>
+
+  <div id="resume-banner" class="resume-banner hidden" role="status">
+    <span id="resume-banner-text">Ada run yang belum selesai.</span>
+    <button type="button" class="btn btn-secondary btn-sm" id="btn-resume-banner">Lanjutkan</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="btn-dismiss-resume">Tutup</button>
+  </div>
+
+  <div id="offline-banner" class="offline-banner hidden" role="status">
+    Offline — shell &amp; briefing cache bisa dibaca. AI/router butuh online.
+  </div>
 
   <div class="shell">
     <aside id="side-nav" class="side-nav" aria-label="Settings">
@@ -124,7 +176,7 @@
               <select id="model-writer" class="model-select"></select>
             </label>
             <p class="fineprint" style="text-align:left;margin-top:0.5rem">
-              3 agent + Firebase memory (DB <code>market</code>): Research save → Analysis load+verify → Writer load+present. Indikator = JSON card. Temp omit. Aktifkan Authentication → Anonymous di Firebase Console.
+              3 agent + Firebase (DB <code>market</code>) + Google login. Tiap agent save → load. Offline PWA: shell + IDB briefing. Gagal → tombol Resume.
             </p>
           </div>
         </details>
@@ -285,8 +337,10 @@
   <nav class="mobile-bar" aria-label="Aksi mobile">
     <button type="button" class="btn btn-ghost" id="btn-run-data-m">Data</button>
     <button type="button" class="btn btn-primary" id="btn-run-m">Run</button>
+    <button type="button" class="btn btn-secondary hidden" id="btn-resume-m">Resume</button>
     <button type="button" class="btn btn-ghost" id="btn-toggle-nav-m">Settings</button>
   </nav>
+  </div><!-- #app-screen -->
 
   <script type="module" src="/js/app.js"></script>
 </body>

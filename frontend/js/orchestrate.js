@@ -20,8 +20,12 @@ import {
   appendCompactMemory,
   finishRunMemory,
   compactResearchForDownstream,
-  compactAnalysisForDownstream
+  compactAnalysisForDownstream,
+  getRunProgress,
+  markRunFailed,
+  cacheLastBriefing
 } from "./agent-memory.js";
+import { isOnline } from "./offline-store.js";
 
 let abortCtrl = null;
 
@@ -30,71 +34,107 @@ export function abortRun() {
 }
 
 /**
- * Pipeline v3 + Firebase agent memory bus:
- * Research SAVE → Analysis LOAD research → SAVE → Writer LOAD analysis → SAVE
+ * Pipeline v3 + memory bus + resume:
+ * Research SAVE → Analysis LOAD → Writer LOAD
+ * @param {{ skipAi?: boolean, resumeRunId?: string }} opts
  */
-export async function runPipeline({ skipAi = false } = {}) {
+export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
   loadSettings();
   if (abortCtrl) abortCtrl.abort();
   abortCtrl = new AbortController();
   const signal = abortCtrl.signal;
 
-  const runId = `run_${Date.now()}`;
+  let runId = resumeRunId || `run_${Date.now()}`;
   const k = appSettings.shortlistK || 8;
   const force = !!appSettings.forceRefresh;
   const max = appSettings.maxIngest > 0 ? appSettings.maxIngest : undefined;
+  const resuming = !!resumeRunId;
 
   try {
-    setStatus("Firebase memory…", "busy");
+    setStatus("Memory / auth…", "busy");
     await initAgentMemory(logLine);
 
-    setStatus("Ingest OHLCV…", "busy");
-    logLine(`Start ${runId} K=${k} force=${force}`);
+    let shortlistPack = null;
+    let startFrom = "research";
 
-    const q = new URLSearchParams({ k: String(k) });
-    if (force) q.set("force", "1");
-    let shortlistPack;
-    if (max) {
-      logLine(`Ingest max=${max} tickers…`);
-      const ohlcvRes = await fetch(
-        "/api/market/ohlcv?" +
-          new URLSearchParams({ force: force ? "1" : "0", max: String(max) }),
-        { signal }
-      );
-      if (!ohlcvRes.ok) throw new Error(await ohlcvRes.text());
-      const ohlcv = await ohlcvRes.json();
+    if (resuming) {
+      logLine(`Resume run ${runId}…`);
+      const prog = await getRunProgress(runId, logLine);
+      startFrom = prog.next || "research";
+      shortlistPack = await loadAgentStep(runId, "shortlist", logLine);
+      if (!shortlistPack) {
+        throw new Error(
+          "Resume gagal: shortlist tidak ada di memory. Jalankan briefing baru."
+        );
+      }
+      renderShortlistTable(shortlistPack);
       logLine(
-        `OHLCV day=${ohlcv.day} coverage=${ohlcv.coveragePct}% ok=${ohlcv.fetchedOk}/${ohlcv.universeSize} cache=${ohlcv.fromCache} ${ohlcv.elapsedMs || 0}ms`
+        `Resume next=${startFrom} steps=${Object.keys(prog.steps || {}).join(",")}`
       );
-      const slRes = await fetch("/api/market/shortlist?" + q.toString(), { signal });
-      if (!slRes.ok) throw new Error(await slRes.text());
-      shortlistPack = await slRes.json();
+      // re-open shell as running
+      await startRunMemory(
+        runId,
+        {
+          kind: "briefing",
+          day: shortlistPack.day,
+          k,
+          searchMode: detectSearchMode(),
+          models: appSettings.models,
+          resumed: true
+        },
+        logLine
+      );
     } else {
-      const slRes = await fetch(
-        "/api/market/shortlist?" + q.toString() + (force ? "&force=1" : ""),
-        { signal }
+      if (!isOnline() && !skipAi) {
+        logLine("Offline — AI agents butuh router online. Data-only / lihat cache OK.", "warn");
+      }
+      setStatus("Ingest OHLCV…", "busy");
+      logLine(`Start ${runId} K=${k} force=${force}`);
+
+      const q = new URLSearchParams({ k: String(k) });
+      if (force) q.set("force", "1");
+      if (max) {
+        logLine(`Ingest max=${max} tickers…`);
+        const ohlcvRes = await fetch(
+          "/api/market/ohlcv?" +
+            new URLSearchParams({ force: force ? "1" : "0", max: String(max) }),
+          { signal }
+        );
+        if (!ohlcvRes.ok) throw new Error(await ohlcvRes.text());
+        const ohlcv = await ohlcvRes.json();
+        logLine(
+          `OHLCV day=${ohlcv.day} coverage=${ohlcv.coveragePct}% ok=${ohlcv.fetchedOk}/${ohlcv.universeSize} cache=${ohlcv.fromCache} ${ohlcv.elapsedMs || 0}ms`
+        );
+        const slRes = await fetch("/api/market/shortlist?" + q.toString(), { signal });
+        if (!slRes.ok) throw new Error(await slRes.text());
+        shortlistPack = await slRes.json();
+      } else {
+        const slRes = await fetch(
+          "/api/market/shortlist?" + q.toString() + (force ? "&force=1" : ""),
+          { signal }
+        );
+        if (!slRes.ok) throw new Error(await slRes.text());
+        shortlistPack = await slRes.json();
+        logLine(
+          `Shortlist day=${shortlistPack.day} coverage=${shortlistPack.dataQuality?.coveragePct}% items=${shortlistPack.shortlist?.length}`
+        );
+      }
+
+      renderShortlistTable(shortlistPack);
+
+      await startRunMemory(
+        runId,
+        {
+          kind: "briefing",
+          day: shortlistPack.day,
+          k,
+          searchMode: detectSearchMode(),
+          models: appSettings.models
+        },
+        logLine
       );
-      if (!slRes.ok) throw new Error(await slRes.text());
-      shortlistPack = await slRes.json();
-      logLine(
-        `Shortlist day=${shortlistPack.day} coverage=${shortlistPack.dataQuality?.coveragePct}% items=${shortlistPack.shortlist?.length}`
-      );
+      await saveAgentStep(runId, "shortlist", shortlistPack, logLine);
     }
-
-    renderShortlistTable(shortlistPack);
-
-    await startRunMemory(
-      runId,
-      {
-        kind: "briefing",
-        day: shortlistPack.day,
-        k,
-        searchMode: detectSearchMode(),
-        models: appSettings.models
-      },
-      logLine
-    );
-    await saveAgentStep(runId, "shortlist", shortlistPack, logLine);
 
     if (skipAi) {
       await finishRunMemory(runId, "data_only", logLine);
@@ -106,52 +146,64 @@ export async function runPipeline({ skipAi = false } = {}) {
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
     logLine(
-      "Memory bus: Research → Firebase → Analysis → Firebase → Writer (db=market)"
+      "Memory bus: Research → save → Analysis → save → Writer (Firebase+IDB)"
     );
 
-    // 1) Research
-    setStatus("Research (web)…", "busy");
-    let research = await runResearcher({
-      shortlistPack,
-      searchMode,
-      memory,
-      signal,
-      onLog: logLine,
-      runId
-    });
-    research.memoryRef = { runId, step: "research" };
-    await saveAgentStep(runId, "research", research, logLine);
-    logLine(
-      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length} findings=${(research.findings || []).length} → saved`
-    );
+    let researchFromMem = null;
+    let researchForAnalysis = null;
+    let analysisFromMem = null;
+    let analysisForWriter = null;
 
-    // Reload from memory bus (source of truth for next agent)
-    const researchFromMem =
-      (await loadAgentStep(runId, "research", logLine)) || research;
-    const researchForAnalysis = compactResearchForDownstream(researchFromMem);
+    // 1) Research (skip if resuming past it)
+    if (startFrom === "research") {
+      setStatus("Research (web)…", "busy");
+      let research = await runResearcher({
+        shortlistPack,
+        searchMode,
+        memory,
+        signal,
+        onLog: logLine,
+        runId
+      });
+      research.memoryRef = { runId, step: "research" };
+      await saveAgentStep(runId, "research", research, logLine);
+      logLine(
+        `Research done mode=${research.agentMeta?.mode || "?"} findings=${(research.findings || []).length} → saved`
+      );
+      researchFromMem = (await loadAgentStep(runId, "research", logLine)) || research;
+    } else {
+      researchFromMem = await loadAgentStep(runId, "research", logLine);
+      if (!researchFromMem) throw new Error("Resume: research pack hilang");
+      logLine("Resume: skip Research (pakai memory)");
+    }
+    researchForAnalysis = compactResearchForDownstream(researchFromMem);
 
-    // 2) Analysis — loads research memory only (compact)
-    setStatus("Analysis + verify…", "busy");
-    let analysis = await runAnalysis({
-      shortlistPack,
-      research: researchForAnalysis,
-      memory,
-      searchMode,
-      runId,
-      signal,
-      onLog: logLine
-    });
-    analysis.memoryRef = { runId, step: "analysis" };
-    await saveAgentStep(runId, "analysis", analysis, logLine);
-    logLine(
-      `Analysis done lean=${analysis.sentiment?.judgeLean || "?"} → saved to memory`
-    );
+    // 2) Analysis
+    if (startFrom === "research" || startFrom === "analysis") {
+      setStatus("Analysis + verify…", "busy");
+      let analysis = await runAnalysis({
+        shortlistPack,
+        research: researchForAnalysis,
+        memory,
+        searchMode,
+        runId,
+        signal,
+        onLog: logLine
+      });
+      analysis.memoryRef = { runId, step: "analysis" };
+      await saveAgentStep(runId, "analysis", analysis, logLine);
+      logLine(
+        `Analysis done lean=${analysis.sentiment?.judgeLean || "?"} → saved`
+      );
+      analysisFromMem = (await loadAgentStep(runId, "analysis", logLine)) || analysis;
+    } else {
+      analysisFromMem = await loadAgentStep(runId, "analysis", logLine);
+      if (!analysisFromMem) throw new Error("Resume: analysis pack hilang");
+      logLine("Resume: skip Analysis (pakai memory)");
+    }
+    analysisForWriter = compactAnalysisForDownstream(analysisFromMem);
 
-    const analysisFromMem =
-      (await loadAgentStep(runId, "analysis", logLine)) || analysis;
-    const analysisForWriter = compactAnalysisForDownstream(analysisFromMem);
-
-    // 3) Writer — loads analysis memory
+    // 3) Writer
     setStatus("Writer…", "busy");
     let briefing = await runWriter({
       shortlistPack,
@@ -169,6 +221,7 @@ export async function runPipeline({ skipAi = false } = {}) {
       agentMeta: researchFromMem.agentMeta
     };
     briefing.pipeline = "research→analysis→writer";
+    briefing.runId = runId;
     briefing.memoryBus = { runId, db: "market", path: `users/{uid}/ihsg_runs/${runId}` };
     await saveAgentStep(runId, "writer", briefing, logLine);
 
@@ -205,8 +258,10 @@ export async function runPipeline({ skipAi = false } = {}) {
     window.__lastShortlist = shortlistPack;
     window.__lastResearch = researchFromMem;
     window.__lastRunId = runId;
+    await cacheLastBriefing(briefing, html);
 
     await postRender();
+    refreshResumeBanner?.();
 
     setStatus("Selesai — " + (briefing.sentiment?.judgeLean || "?"), "ok");
     logLine(
@@ -220,15 +275,30 @@ export async function runPipeline({ skipAi = false } = {}) {
     return { shortlistPack, briefing, research: researchFromMem, analysis: analysisFromMem, runId };
   } catch (e) {
     if (e.name === "AbortError") {
-      setStatus("Dibatalkan", "warn");
-      logLine("Aborted", "warn");
+      await markRunFailed(runId, "aborted", logLine);
+      setStatus("Dibatalkan — bisa Resume", "warn");
+      logLine("Aborted — progress tersimpan", "warn");
+      refreshResumeBanner?.();
       return null;
     }
     console.error(e);
-    setStatus("Error: " + e.message, "err");
-    logLine(String(e.message || e), "err");
+    await markRunFailed(runId, e.message || e, logLine);
+    setStatus("Error — progress tersimpan, Resume OK", "err");
+    logLine(String(e.message || e) + ` · runId=${runId} → Resume`, "err");
+    refreshResumeBanner?.();
     throw e;
   }
+}
+
+/** Hook set by app.js for resume UI */
+export let refreshResumeBanner = null;
+export function setResumeBannerRefresh(fn) {
+  refreshResumeBanner = fn;
+}
+
+export async function resumePipeline(runId) {
+  if (!runId) throw new Error("runId kosong");
+  return runPipeline({ skipAi: false, resumeRunId: runId });
 }
 
 export async function runDeepDive(tickerRaw) {

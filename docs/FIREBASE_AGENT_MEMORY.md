@@ -20,11 +20,15 @@ Bukan cuma UI: **handoff agent lewat RAM saja** + payload oversized + router dro
 
 ## Setup Console
 
-1. Authentication → Sign-in method → **Anonymous** = Enable
-2. Firestore database **market** exists (nam5)
-3. Deploy rules (`firestore.rules`) ke database market
-4. Hard-refresh app → log: `Firebase memory OK · db=market`
+1. Authentication → Sign-in method → **Google** = Enable
+2. Authorized domains: `localhost` (+ production host)
+3. Firestore database **market** exists (nam5)
+4. Deploy rules (`firestore.rules`) ke database market
+5. Hard-refresh → login Google → log: `Firebase memory OK · Google=…`
 
-## Offline
+## Offline PWA
 
-Tanpa auth: localStorage + `/api/memory` + `/api/runs` tetap jalan.
+- Service worker: `/sw.js` (shell + JS)
+- IndexedDB: runs, agent steps, last briefing HTML
+- Tombol **Resume** jika run gagal/abort (lanjut dari research/analysis/writer)
+- Tombol **Lanjut offline** di auth screen: pakai app tanpa sync cloud

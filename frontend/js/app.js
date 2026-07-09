@@ -1,12 +1,34 @@
 import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "./state.js";
-import { runPipeline, runDeepDive, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
-import { injectReportStylesOnce } from "./render-report.js";
+import {
+  runPipeline,
+  runDeepDive,
+  abortRun,
+  downloadHtml,
+  downloadJson,
+  resumePipeline,
+  setResumeBannerRefresh
+} from "./orchestrate.js";
+import { injectReportStylesOnce, renderBriefingHtml } from "./render-report.js";
 import { fetchModels } from "./ai.js";
 import { loadUniverseBrowser } from "./universe-browser.js";
-import { initAgentMemory } from "./agent-memory.js";
+import { initAgentMemory, listResumableRuns, cacheLastBriefing } from "./agent-memory.js";
+import {
+  waitForAuth,
+  signInWithGoogle,
+  signOut,
+  onUserChanged,
+  currentUser
+} from "./firebase.js";
+import {
+  loadLastBriefingCached,
+  isOnline
+} from "./offline-store.js";
 
 const SHELL = () => document.querySelector(".shell");
 const THEME_KEY = "ihsg-theme";
+const OFFLINE_OK_KEY = "ihsg-allow-offline-session";
+
+let pendingResumeRunId = null;
 
 function applyTheme(mode) {
   const m = mode || localStorage.getItem(THEME_KEY) || "system";
@@ -313,6 +335,28 @@ function init() {
   $("btn-dl-json")?.addEventListener("click", () => downloadJson());
   $("btn-dl-html")?.addEventListener("click", () => downloadHtml());
 
+  const doResume = () =>
+    withBusy(["btn-run", "btn-run-m", "btn-resume", "btn-resume-m", "btn-resume-banner"], async () => {
+      if (!pendingResumeRunId) {
+        await refreshResumeUi();
+        if (!pendingResumeRunId) {
+          setStatus("Tidak ada run untuk di-resume", "warn");
+          return;
+        }
+      }
+      readSettingsFromForm();
+      setLogOpen(true);
+      logLine(`Resume pipeline ${pendingResumeRunId}`);
+      await resumePipeline(pendingResumeRunId);
+    });
+
+  $("btn-resume")?.addEventListener("click", doResume);
+  $("btn-resume-m")?.addEventListener("click", doResume);
+  $("btn-resume-banner")?.addEventListener("click", doResume);
+  $("btn-dismiss-resume")?.addEventListener("click", () => {
+    $("resume-banner")?.classList.add("hidden");
+  });
+
   $("btn-deep-dive")?.addEventListener("click", async () => {
     readSettingsFromForm();
     const ticker = $("deep-ticker")?.value || "";
@@ -331,22 +375,218 @@ function init() {
     }
   });
 
-  fetch("/api/health")
-    .then((r) => r.json())
-    .then(async (j) => {
+  // Auth UI
+  wireAuthUi();
+  setResumeBannerRefresh(refreshResumeUi);
+
+  // Online / offline banners
+  const syncNet = () => {
+    const offline = !isOnline();
+    $("offline-banner")?.classList.toggle("hidden", !offline);
+    if (offline) logLine("Browser offline — PWA shell + cache aktif", "warn");
+  };
+  window.addEventListener("online", () => {
+    syncNet();
+    logLine("Online kembali");
+    setStatus("Online", "ok");
+  });
+  window.addEventListener("offline", syncNet);
+  syncNet();
+
+  // Service worker
+  registerServiceWorker();
+
+  // Boot: auth + memory + restore offline briefing
+  bootApp();
+}
+
+function showAuthError(msg) {
+  const el = $("auth-error");
+  if (!el) return;
+  el.innerHTML = msg;
+  el.classList.remove("hidden");
+}
+
+function setAuthScreen(show) {
+  $("auth-screen")?.classList.toggle("hidden", !show);
+  // app always visible for offline read; gate only when forcing login
+}
+
+function paintUser(user) {
+  const chip = $("user-chip");
+  if (!chip) return;
+  if (user && !user.isAnonymous) {
+    chip.classList.remove("hidden");
+    const av = $("user-avatar");
+    if (av) {
+      av.src = user.photoURL || "";
+      av.alt = user.displayName || "user";
+    }
+    if ($("user-name")) {
+      $("user-name").textContent =
+        user.displayName?.split(" ")[0] || user.email?.split("@")[0] || "akun";
+    }
+  } else {
+    chip.classList.add("hidden");
+  }
+}
+
+function wireAuthUi() {
+  $("btn-google-signin")?.addEventListener("click", async () => {
+    $("auth-error")?.classList.add("hidden");
+    try {
+      const u = await signInWithGoogle({ preferRedirect: false });
+      if (u) {
+        logLine("Google sign-in OK: " + (u.email || u.uid));
+        localStorage.removeItem(OFFLINE_OK_KEY);
+        setAuthScreen(false);
+        paintUser(u);
+        await initAgentMemory(logLine);
+        setStatus("Login Google · memory sync", "ok");
+      }
+    } catch (e) {
+      console.error(e);
+      const code = e.code || "";
+      const msg = e.message || String(e);
+      if (
+        code === "auth/unauthorized-domain" ||
+        msg.includes("unauthorized-domain") ||
+        msg.includes("invalid-continue-uri")
+      ) {
+        showAuthError(
+          "Domain belum di-whitelist di Firebase Console.<br/>Tambah <b>" +
+            location.hostname +
+            "</b> ke Authentication → Settings → Authorized domains."
+        );
+      } else {
+        showAuthError(msg);
+      }
+    }
+  });
+
+  $("btn-continue-offline")?.addEventListener("click", () => {
+    localStorage.setItem(OFFLINE_OK_KEY, "1");
+    setAuthScreen(false);
+    logLine("Mode offline lokal (tanpa Google sync)");
+    setStatus("Offline mode · memory lokal", "info");
+  });
+
+  $("btn-signout")?.addEventListener("click", async () => {
+    try {
+      await signOut();
+      localStorage.removeItem(OFFLINE_OK_KEY);
+      paintUser(null);
+      setAuthScreen(true);
+      setStatus("Signed out", "info");
+      logLine("Signed out");
+    } catch (e) {
+      logLine("Sign out: " + e.message, "err");
+    }
+  });
+
+  onUserChanged((user) => {
+    paintUser(user);
+    if (user && !user.isAnonymous) {
+      setAuthScreen(false);
+    }
+  });
+}
+
+async function refreshResumeUi() {
+  try {
+    const list = await listResumableRuns(logLine);
+    const top = list[0];
+    pendingResumeRunId = top?.runId || null;
+    const show = !!pendingResumeRunId;
+    $("btn-resume")?.classList.toggle("hidden", !show);
+    $("btn-resume-m")?.classList.toggle("hidden", !show);
+    const banner = $("resume-banner");
+    if (banner) {
+      banner.classList.toggle("hidden", !show);
+      if (show && $("resume-banner-text")) {
+        $("resume-banner-text").textContent =
+          `Run tertunda ${pendingResumeRunId}` +
+          (top.lastError ? ` · ${String(top.lastError).slice(0, 80)}` : "") +
+          " — lanjut dari agent terakhir.";
+      }
+    }
+  } catch (e) {
+    logLine("resume ui: " + e.message, "warn");
+  }
+}
+
+async function restoreOfflineBriefing() {
+  try {
+    const cached = await loadLastBriefingCached();
+    if (!cached?.briefing && !cached?.html) return;
+    injectReportStylesOnce();
+    const reportEl = $("report-view");
+    if (!reportEl) return;
+    if (cached.html) {
+      reportEl.innerHTML = cached.html;
+    } else if (cached.briefing) {
+      reportEl.innerHTML = renderBriefingHtml(cached.briefing);
+    }
+    window.__lastBriefing = cached.briefing || window.__lastBriefing;
+    logLine(
+      "Restored briefing cache offline · " +
+        (cached.briefing?.asOfSession || cached.at || "")
+    );
+    setStatus("Briefing dari cache offline", "info");
+  } catch (e) {
+    logLine("restore cache: " + e.message, "warn");
+  }
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker
+    .register("/sw.js")
+    .then((reg) => logLine("PWA SW registered · " + (reg.scope || "")))
+    .catch((e) => logLine("SW register fail: " + e.message, "warn"));
+}
+
+async function bootApp() {
+  try {
+    const user = await waitForAuth();
+    const allowOffline = localStorage.getItem(OFFLINE_OK_KEY) === "1";
+    if (user && !user.isAnonymous) {
+      setAuthScreen(false);
+      paintUser(user);
+      logLine("Session Google: " + (user.email || user.uid.slice(0, 8)));
+    } else if (allowOffline || !isOnline()) {
+      setAuthScreen(false);
+      if (!isOnline()) logLine("Boot offline — skip auth gate");
+    } else {
+      setAuthScreen(true);
+    }
+
+    const mem = await initAgentMemory(logLine);
+    await restoreOfflineBriefing();
+    await refreshResumeUi();
+
+    try {
+      const r = await fetch("/api/health");
+      const j = await r.json();
       logLine("API ok · " + j.service);
-      const mem = await initAgentMemory(logLine);
       setStatus(
         mem.ok
-          ? "Siap · Firebase market memory OK"
-          : "Siap · memory lokal (Firebase auth off)",
+          ? "Siap · Google + Firebase market"
+          : isOnline()
+            ? "Siap · offline memory (login untuk sync)"
+            : "Offline · cache tersedia",
         mem.ok ? "ok" : "info"
       );
-    })
-    .catch((e) => {
+    } catch (e) {
       logLine("API fail: " + e.message, "err");
-      setStatus("API offline", "err");
-    });
+      setStatus("API offline · cache PWA OK", "warn");
+      await restoreOfflineBriefing();
+    }
+  } catch (e) {
+    console.error(e);
+    logLine("Boot: " + e.message, "err");
+    setAuthScreen(localStorage.getItem(OFFLINE_OK_KEY) !== "1");
+  }
 }
 
 init();
