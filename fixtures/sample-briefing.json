@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_sample",
+  "asOfSession": "2026-07-09",
+  "generatedAt": "2026-07-09T10:00:00.000Z",
+  "searchMode": "FALLBACK",
+  "dataQuality": { "coveragePct": 85, "sources": ["yahoo-chart-v8"], "gaps": [] },
+  "ihsg": { "close": 5912, "changePct": 0.67, "volume": 0, "rvol": 1.1 },
+  "globals": [
+    { "symbol": "^GSPC", "label": "S&P500", "changePct": -0.2 },
+    { "symbol": "USDIDR=X", "label": "USDIDR", "changePct": 0.1 }
+  ],
+  "breadth": { "adv": 280, "dec": 250, "flat": 20, "total": 550 },
+  "sentiment": {
+    "fear": { "summary": "Beberapa spike rawan nampung di late session." },
+    "positive": { "summary": "Flow masih ada di nama volume; fear retail masih terlihat di luar large cap." },
+    "judgeLean": "positive",
+    "judgeRationale": "Money flow di shortlist gainer masih hidup; hindari hanya yang exit-liq high.",
+    "judgePriority": "follow_money",
+    "confidenceRaw": 0.55,
+    "confidenceLabel": "uncalibrated"
+  },
+  "marketWide": {
+    "regimeTag": "selective_risk_on",
+    "themes": ["rotation_bank", "spekulatif_high_rvol"],
+    "unexplained": [],
+    "bestMoveOverall": "Ikut flow di nama rvol sehat; skip yang spike >20% tanpa catalyst.",
+    "followMoneyThesis": "Uang masih pilih-pilih; bukan risk-off total."
+  },
+  "shortlist": [
+    {
+      "ticker": "BBCA",
+      "whySelected": ["top_gainer"],
+      "metrics": { "close": 10000, "changePct": 2.1, "volume": 5e7, "rvol": 1.4, "zRet": 1.2 },
+      "stance": {
+        "aggressionAllowed": true,
+        "exitLiquidityRisk": "low",
+        "fomoThesis": "Large cap, flow bank masih jalan, room dari fear luar",
+        "invalidation": "Tutup di bawah open dengan volume tinggi",
+        "timeHorizon": "1-5d",
+        "judgePriority": "follow_money"
+      },
+      "scenarios": {
+        "base": { "narrative": "Konsolidasi naik bertahap", "horizon": "1-5d", "prob": 0.5 },
+        "bull": { "narrative": "Continuation foreign inflow", "horizon": "1-5d", "prob": 0.25 },
+        "bear": { "narrative": "Fade dengan IHSG lemah", "horizon": "1-5d", "prob": 0.25 }
+      },
+      "bestMoveFraming": "Boleh ikut flow dengan invalidation jelas"
+    },
+    {
+      "ticker": "GORX",
+      "whySelected": ["rvol_spike", "top_gainer"],
+      "metrics": { "close": 200, "changePct": 24.5, "volume": 9e8, "rvol": 9.2, "zRet": 4.1 },
+      "stance": {
+        "aggressionAllowed": false,
+        "exitLiquidityRisk": "high",
+        "fomoThesis": "",
+        "invalidation": "Sudah late; climax risk",
+        "timeHorizon": "intraday",
+        "judgePriority": "avoid_exit_liq"
+      },
+      "scenarios": {
+        "base": { "narrative": "Volatil; distribusi mungkin", "horizon": "1-2d", "prob": 0.45 },
+        "bull": { "narrative": "Masih digoreng 1-2 hari", "horizon": "1-3d", "prob": 0.25 },
+        "bear": { "narrative": "Dump ke retail", "horizon": "1-2d", "prob": 0.3 }
+      },
+      "bestMoveFraming": "Jangan jadi exit liquidity"
+    }
+  ],
+  "diagrams": {
+    "flowMermaid": "flowchart TD\n  IHSG -->|selective| Bank\n  IHSG -->|trap| Gorengan\n  Bank --> FollowMoney\n  Gorengan --> ExitLiq"
+  },
+  "memoryWrite": {
+    "compact": {
+      "regimeTag": "selective_risk_on",
+      "themes": ["bank", "gorengan"],
+      "lean": "positive",
+      "top_tickers_1line": ["BBCA flow ok", "GORX exit-liq high"]
+    },
+    "openHypotheses": [
+      {
+        "id": "h1",
+        "claim": "BBCA hold above open next session",
+        "prob": 0.55,
+        "horizon_end": "2026-07-11",
+        "resolution_rule": "close > today open"
+      }
+    ]
+  },
+  "disclaimer": "Bukan saran investasi. Keputusan akhir di user."
+}

@@ -1,0 +1,15 @@
+{
+  "name": "ihsg-market-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal IHSG market insight bot — on-demand, free-first, follow-the-money",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "test": "node tests/stance-rules.test.mjs && node tests/shortlist.test.mjs && node tests/schema.test.mjs"
+  },
+  "dependencies": {
+    "cors-anywhere": "^0.4.4",
+    "express": "^5.2.1"
+  }
+}

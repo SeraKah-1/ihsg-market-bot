@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IHSG Market Bot</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: false, theme: "dark" });
+    window.mermaid = mermaid;
+  </script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel settings">
+      <h1>IHSG Market Bot</h1>
+      <p class="tagline">Follow the money · FOMO boleh · anti exit-liquidity · data dulu</p>
+
+      <h2>Custom router</h2>
+      <label>Endpoint <input id="custom-endpoint" type="text" placeholder="http://127.0.0.1:20128/v1" /></label>
+      <label>API key <input id="custom-api-key" type="password" placeholder="sk-..." /></label>
+      <label class="row"><input id="use-cors-proxy" type="checkbox" checked /> Use CORS proxy</label>
+
+      <h2>Models</h2>
+      <label>Research <input id="model-research" type="text" /></label>
+      <label>Fear <input id="model-fear" type="text" /></label>
+      <label>Positive <input id="model-positive" type="text" /></label>
+      <label>Judge <input id="model-judge" type="text" /></label>
+
+      <h2>Run options</h2>
+      <label>Shortlist K <input id="shortlist-k" type="number" min="3" max="20" value="8" /></label>
+      <label>Max ingest (0=all) <input id="max-ingest" type="number" min="0" value="0" title="Isi 40–80 untuk smoke test cepat" /></label>
+      <label class="row"><input id="force-refresh" type="checkbox" /> Force refresh cache</label>
+      <label>Search mode
+        <select id="search-mode">
+          <option value="auto">auto (DDG fallback)</option>
+          <option value="FALLBACK">FALLBACK (DDG)</option>
+          <option value="DEGRADED">DEGRADED (no search)</option>
+          <option value="FULL">FULL (native — if model supports)</option>
+        </select>
+      </label>
+
+      <div class="btn-row">
+        <button id="btn-save-settings" type="button">Save settings</button>
+        <button id="btn-run-data" type="button" class="secondary">Data only</button>
+        <button id="btn-run" type="button" class="primary">Run briefing</button>
+        <button id="btn-abort" type="button" class="danger">Abort</button>
+      </div>
+      <div class="btn-row">
+        <button id="btn-dl-json" type="button" class="secondary">Download JSON</button>
+        <button id="btn-dl-html" type="button" class="secondary">Download HTML</button>
+      </div>
+      <p id="run-status" class="status">—</p>
+    </aside>
+
+    <main class="panel main">
+      <section>
+        <h2>Shortlist</h2>
+        <div id="shortlist-table" class="table-wrap"><p class="muted">Belum ada data. Klik Data only atau Run.</p></div>
+      </section>
+      <section>
+        <h2>Report</h2>
+        <div id="report-view" class="report"><p class="muted">JSON→HTML muncul di sini setelah Judge.</p></div>
+      </section>
+    </main>
+
+    <aside class="panel log">
+      <h2>Log</h2>
+      <div id="log-stream" class="log-stream"></div>
+    </aside>
+  </div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
