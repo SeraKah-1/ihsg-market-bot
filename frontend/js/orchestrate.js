@@ -26,6 +26,7 @@ import {
   cacheLastBriefing
 } from "./agent-memory.js";
 import { isOnline } from "./offline-store.js";
+import { saveGeneratedDoc } from "./storage-store.js";
 
 let abortCtrl = null;
 
@@ -260,6 +261,24 @@ export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
     window.__lastRunId = runId;
     await cacheLastBriefing(briefing, html);
 
+    // Auto-save to Storage → Briefings
+    try {
+      const saved = await saveGeneratedDoc({
+        kind: "briefing",
+        title: `Briefing · ${briefing.asOfSession || shortlistPack.day || "—"}`,
+        asOf: briefing.asOfSession || shortlistPack.day,
+        runId,
+        payload: briefing,
+        html,
+        lean: briefing.sentiment?.judgeLean,
+        headline: briefing.presentation?.headline || briefing.marketWide?.plainHeadline
+      });
+      const { notifyStorageSaved } = await import("./storage-ui.js");
+      await notifyStorageSaved(saved);
+    } catch (e) {
+      logLine("Storage save briefing: " + e.message, "warn");
+    }
+
     await postRender();
     refreshResumeBanner?.();
 
@@ -389,6 +408,26 @@ export async function runDeepDive(tickerRaw) {
     if (reportEl) reportEl.innerHTML = html;
     window.__lastBriefing = report;
     window.__lastRunId = runId;
+    await cacheLastBriefing(report, html);
+
+    // Auto-save to Storage → Deep Dives (per ticker)
+    try {
+      const saved = await saveGeneratedDoc({
+        kind: "deep_dive",
+        ticker,
+        title: `Deep dive ${ticker} · ${report.asOfSession || marketPack.day || "—"}`,
+        asOf: report.asOfSession || marketPack.day || null,
+        runId,
+        payload: report,
+        html,
+        lean: report.forecast?.lean || report.sentiment?.judgeLean,
+        headline: report.presentation?.headline || report.thesis?.oneLiner || null
+      });
+      const { notifyStorageSaved } = await import("./storage-ui.js");
+      await notifyStorageSaved(saved);
+    } catch (e) {
+      logLine("Storage save deep dive: " + e.message, "warn");
+    }
 
     const sl = document.getElementById("shortlist-table");
     if (sl && marketPack.stock) {
@@ -416,7 +455,7 @@ export async function runDeepDive(tickerRaw) {
 
     await postRender();
     setStatus(`Deep dive ${ticker} selesai · ${report.forecast?.lean || "?"}`, "ok");
-    logLine(`Deep dive done ${ticker} · Firebase agents/deep_dive`);
+    logLine(`Deep dive done ${ticker} · saved to Storage/Deep Dives`);
     return report;
   } catch (e) {
     if (e.name === "AbortError") {

@@ -743,3 +743,260 @@ html.dark-mode .auth-error {
   color: #fecaca;
   background: color-mix(in srgb, #7f1d1d 40%, transparent);
 }
+
+/* —— View tabs Live / Storage —— */
+.view-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0 0 0.85rem;
+  padding: 0.25rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg, #1c1917) 6%, transparent);
+  width: fit-content;
+}
+.view-tab {
+  border: none;
+  background: transparent;
+  padding: 0.4rem 0.95rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--fg, #1c1917) 70%, transparent);
+}
+.view-tab[aria-pressed="true"] {
+  background: var(--surface, #fffdf8);
+  color: var(--fg, #1c1917);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 10%, transparent);
+}
+
+/* —— Storage tree —— */
+.storage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.65rem;
+}
+.storage-filter-field { flex: 1 1 12rem; margin: 0; }
+.storage-toolbar-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.storage-tree {
+  padding: 0.5rem 0.35rem;
+  min-height: 12rem;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+.st-folder { margin-bottom: 0.25rem; }
+.st-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.st-folder-head:hover { background: color-mix(in srgb, var(--fg, #1c1917) 6%, transparent); }
+.st-chev { width: 1rem; font-size: 0.7rem; opacity: 0.7; }
+.st-folder-name { font-weight: 560; font-size: 0.9rem; flex: 1; min-width: 0; }
+.st-count {
+  font-size: 0.7rem;
+  font-family: "IBM Plex Mono", monospace;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg, #1c1917) 8%, transparent);
+}
+.st-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  opacity: 0.85;
+}
+.st-badge-briefing { background: color-mix(in srgb, #2563eb 18%, transparent); color: #1d4ed8; }
+.st-badge-deep { background: color-mix(in srgb, #b45309 18%, transparent); color: #b45309; }
+.st-badge-user { background: color-mix(in srgb, #64748b 18%, transparent); }
+.st-folder-body { padding-left: 0.85rem; }
+.st-empty { font-size: 0.8rem; opacity: 0.55; padding: 0.35rem 0.5rem; font-style: italic; }
+.st-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  padding: 0.5rem 0.55rem 0.25rem;
+}
+.st-doc {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.st-doc:hover { background: color-mix(in srgb, var(--fg, #1c1917) 5%, transparent); }
+.st-doc.active {
+  background: color-mix(in srgb, #b45309 12%, transparent);
+  outline: 1px solid color-mix(in srgb, #b45309 28%, transparent);
+}
+.st-doc-kind {
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: "IBM Plex Mono", monospace;
+  width: 1.6rem;
+  text-align: center;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.st-kind-brief { background: color-mix(in srgb, #2563eb 16%, transparent); color: #1d4ed8; }
+.st-kind-deep { background: color-mix(in srgb, #b45309 16%, transparent); color: #b45309; }
+.st-doc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.st-doc-title { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-doc-meta { font-size: 0.72rem; opacity: 0.6; }
+.st-tick {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  color: var(--accent, #b45309);
+}
+.st-more {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  opacity: 0.55;
+  font-size: 1rem;
+  line-height: 1;
+}
+.st-more:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.st-ctx-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 10rem;
+  padding: 0.3rem;
+  border-radius: 10px;
+  background: var(--surface, #fffdf8);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 8px 28px color-mix(in srgb, #000 14%, transparent);
+}
+.st-ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.st-ctx-item:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: color-mix(in srgb, #000 35%, transparent);
+}
+.modal-card {
+  width: min(380px, 100%);
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: var(--surface, #fffdf8);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 16px 48px color-mix(in srgb, #000 20%, transparent);
+}
+.modal-title {
+  margin: 0 0 0.85rem;
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+/* Emiten panel */
+.emiten-panel {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem 1rem;
+  border: 1px solid color-mix(in srgb, #b45309 28%, transparent);
+  background: color-mix(in srgb, #b45309 6%, var(--surface, #fffdf8));
+}
+.emiten-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.emiten-panel-head h2 {
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.35rem;
+}
+.emiten-panel-actions { display: flex; gap: 0.35rem; align-items: center; }
+.emiten-dives-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 14rem;
+  overflow: auto;
+}
+.emiten-dive-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  background: var(--surface, #fff);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  cursor: pointer;
+}
+.emiten-dive-item:hover {
+  border-color: color-mix(in srgb, #b45309 40%, transparent);
+}
+.emiten-dive-title { font-size: 0.88rem; font-weight: 500; }
+.emiten-dive-meta { font-size: 0.72rem; opacity: 0.65; }
+
+.ticker-link {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.ticker-link:hover .ticker { text-decoration: underline; color: var(--accent, #b45309); }
+.univ-row { cursor: pointer; }
+.univ-row:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.univ-saved.has-saved {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  color: #b45309;
+  font-weight: 600;
+}
+
+html.dark-mode .st-badge-briefing { color: #93c5fd; }
+html.dark-mode .st-badge-deep,
+html.dark-mode .st-kind-deep,
+html.dark-mode .univ-saved.has-saved { color: #fbbf24; }
+html.dark-mode .st-kind-brief { color: #93c5fd; }
+html.dark-mode .modal-card,
+html.dark-mode .st-ctx-menu { background: #1c1917; }

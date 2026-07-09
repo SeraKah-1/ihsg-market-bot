@@ -253,6 +253,12 @@
     </aside>
 
     <main id="main-content" class="main" tabindex="-1">
+      <div class="view-tabs" role="tablist" aria-label="Tampilan utama">
+        <button type="button" class="view-tab" data-main-view="live" aria-pressed="true" role="tab">Live</button>
+        <button type="button" class="view-tab" data-main-view="storage" aria-pressed="false" role="tab">Storage</button>
+      </div>
+
+      <div id="view-live">
       <section class="kpi-strip" id="kpi-strip" aria-label="Ringkasan pasar">
         <article class="kpi empty">
           <span class="kpi-label">IHSG</span>
@@ -282,7 +288,7 @@
             <p class="eyebrow">Universe</p>
             <h2 id="h-universe">Daftar emiten</h2>
           </div>
-          <p class="block-desc">Semua ticker · filter · deep dive per baris</p>
+          <p class="block-desc">Klik emiten → deep dive tersimpan · Briefing pasar di Storage</p>
         </header>
         <div id="universe-browser" class="surface">
           <div class="empty-state">
@@ -291,6 +297,22 @@
           </div>
         </div>
       </section>
+
+      <!-- Emiten deep-dive drawer -->
+      <aside id="emiten-panel" class="emiten-panel surface hidden" aria-label="Deep dive emiten">
+        <header class="emiten-panel-head">
+          <div>
+            <p class="eyebrow">Deep dive emiten</p>
+            <h2 id="emiten-panel-title">—</h2>
+          </div>
+          <div class="emiten-panel-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-emiten-deep">Run deep dive</button>
+            <button type="button" class="icon-btn" id="btn-close-emiten" aria-label="Tutup">✕</button>
+          </div>
+        </header>
+        <p class="fineprint" style="margin:0 0 0.5rem">File tersimpan di Storage → <b>Deep Dives</b> (terpisah dari Briefings pasar).</p>
+        <div id="emiten-dives-list" class="emiten-dives-list"></div>
+      </aside>
 
       <section class="block" aria-labelledby="h-shortlist">
         <header class="block-head">
@@ -314,15 +336,52 @@
             <p class="eyebrow">Analysis</p>
             <h2 id="h-report">Briefing</h2>
           </div>
-          <p class="block-desc">Injected HTML · collapsible · export-ready</p>
+          <p class="block-desc">Injected HTML · collapsible · export-ready · auto-save Storage</p>
         </header>
         <div id="report-view" class="report surface">
           <div class="empty-state">
             <p class="empty-title">Belum ada laporan</p>
-            <p class="empty-body">Judge output muncul di sini. Export dari top bar.</p>
+            <p class="empty-body">Briefing / deep dive muncul di sini. Buka ulang dari tab <b>Storage</b>.</p>
           </div>
         </div>
       </section>
+      </div><!-- #view-live -->
+
+      <!-- Storage browser (folders + files CRUD) -->
+      <div id="view-storage" class="hidden">
+        <section class="block" aria-labelledby="h-storage">
+          <header class="block-head">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h2 id="h-storage">Storage</h2>
+            </div>
+            <p class="block-desc" id="storage-meta">Briefings · Deep Dives · folder custom</p>
+          </header>
+          <div class="storage-toolbar surface">
+            <label class="field storage-filter-field">
+              <span class="field-label">Cari file</span>
+              <input type="search" id="storage-filter" placeholder="judul, ticker…" />
+            </label>
+            <div class="storage-toolbar-btns">
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-storage-new-folder">+ Folder</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-storage-new-note">+ Catatan</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-storage-refresh">Refresh</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-storage-export">Export</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-storage-import">Import</button>
+              <input type="file" id="storage-import-file" accept="application/json,.json" hidden />
+            </div>
+          </div>
+          <div id="storage-tree" class="storage-tree surface">
+            <div class="empty-state">
+              <p class="empty-title">Memuat storage…</p>
+            </div>
+          </div>
+          <p class="fineprint">
+            Folder sistem: <b>Briefings</b> (analisa pasar harian) dan <b>Deep Dives</b> (per emiten).
+            CRUD: rename / pindah / hapus via ⋯. Sync Firebase jika login Google. Offline: IndexedDB.
+          </p>
+        </section>
+      </div>
     </main>
 
     <aside id="log-drawer" class="log-drawer" aria-label="Activity log" hidden>

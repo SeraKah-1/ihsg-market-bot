@@ -12,6 +12,7 @@ import { injectReportStylesOnce, renderBriefingHtml } from "./render-report.js";
 import { fetchModels } from "./ai.js";
 import { loadUniverseBrowser } from "./universe-browser.js";
 import { initAgentMemory, listResumableRuns, cacheLastBriefing } from "./agent-memory.js";
+import { initStorageUi } from "./storage-ui.js";
 import {
   waitForAuth,
   signInWithGoogle,
@@ -310,8 +311,9 @@ function init() {
     }
   });
 
-  // universe browser + status
+  // universe browser + storage library
   loadUniverseBrowser();
+  initStorageUi().catch((e) => logLine("storage init: " + e.message, "warn"));
 
   const runFull = () =>
     withBusy(["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m"], async () => {

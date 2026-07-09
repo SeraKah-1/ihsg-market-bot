@@ -1,8 +1,10 @@
 /**
- * Browse full emiten universe + launch deep dive.
+ * Browse full emiten universe + open emiten panel / deep dive.
  */
 import { logLine, setStatus, $ } from "./state.js";
 import { runDeepDive } from "./orchestrate.js";
+import { openEmitenPanel } from "./storage-ui.js";
+import { listDocsForTicker } from "./storage-store.js";
 
 const PAGE_SIZE = 40;
 let allTickers = [];
@@ -39,6 +41,7 @@ export function renderUniverseBrowser() {
   if (page < 0) page = 0;
   const slice = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
+  // badge counts for deep dives (best-effort, async fill after)
   host.innerHTML = `
     <div class="univ-toolbar">
       <label class="field univ-filter">
@@ -62,6 +65,7 @@ export function renderUniverseBrowser() {
             <th scope="col">#</th>
             <th scope="col">Ticker</th>
             <th scope="col">Yahoo</th>
+            <th scope="col">Saved</th>
             <th scope="col">Aksi</th>
           </tr>
         </thead>
@@ -71,23 +75,39 @@ export function renderUniverseBrowser() {
               ? slice
                   .map((t, i) => {
                     const n = page * PAGE_SIZE + i + 1;
-                    return `<tr data-ticker="${escAttr(t)}">
+                    return `<tr class="univ-row" data-ticker="${escAttr(t)}" title="Klik baris / ticker → panel deep dive tersimpan">
               <td class="rpt-mono">${n}</td>
-              <td><span class="ticker">${esc(t)}</span></td>
+              <td><button type="button" class="ticker-link univ-open" data-ticker="${escAttr(t)}"><span class="ticker">${esc(t)}</span></button></td>
               <td class="univ-yahoo">${esc(t)}.JK</td>
+              <td class="univ-saved" data-saved-for="${escAttr(t)}">—</td>
               <td>
+                <button type="button" class="btn btn-ghost btn-sm univ-open" data-ticker="${escAttr(t)}">Buka</button>
                 <button type="button" class="btn btn-primary btn-sm univ-deep" data-ticker="${escAttr(t)}">Deep dive</button>
               </td>
             </tr>`;
                   })
                   .join("")
-              : `<tr><td colspan="4" class="muted">Tidak ada yang cocok filter.</td></tr>`
+              : `<tr><td colspan="5" class="muted">Tidak ada yang cocok filter.</td></tr>`
           }
         </tbody>
       </table>
     </div>
-    <p class="fineprint univ-hint">Deep dive agentic: model pilih query sendiri lewat web tools + reasoning (FULL). Fallback news jika native gagal.</p>
+    <p class="fineprint univ-hint">Klik <b>ticker / Buka</b> → deep dive tersimpan untuk emiten. <b>Deep dive</b> = generate baru. Briefing pasar terpisah di menu Storage → Briefings.</p>
   `;
+
+  // async fill saved counts
+  slice.forEach(async (t) => {
+    try {
+      const dives = await listDocsForTicker(t);
+      const cell = host.querySelector(`[data-saved-for="${t}"]`);
+      if (cell) {
+        cell.textContent = dives.length ? `${dives.length} DD` : "—";
+        if (dives.length) cell.classList.add("has-saved");
+      }
+    } catch {
+      /* */
+    }
+  });
 
   $("universe-filter")?.addEventListener("input", (e) => {
     filter = e.target.value || "";
@@ -111,8 +131,26 @@ export function renderUniverseBrowser() {
   });
   $("univ-reload")?.addEventListener("click", () => loadUniverseBrowser());
 
+  host.querySelectorAll(".univ-open").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const t = btn.getAttribute("data-ticker");
+      logLine(`Universe → panel ${t}`);
+      openEmitenPanel(t);
+    });
+  });
+
+  host.querySelectorAll(".univ-row").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      const t = row.getAttribute("data-ticker");
+      openEmitenPanel(t);
+    });
+  });
+
   host.querySelectorAll(".univ-deep").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       const t = btn.getAttribute("data-ticker");
       const deepInput = $("deep-ticker");
       if (deepInput) deepInput.value = t;
@@ -121,6 +159,7 @@ export function renderUniverseBrowser() {
       logLine(`Universe → deep dive ${t}`);
       try {
         await runDeepDive(t);
+        await openEmitenPanel(t);
       } finally {
         btn.disabled = false;
       }

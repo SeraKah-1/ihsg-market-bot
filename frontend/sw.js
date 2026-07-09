@@ -1,5 +1,5 @@
 /* IHSG Market Bot — PWA shell offline */
-const CACHE_VERSION = "ihsg-shell-v1";
+const CACHE_VERSION = "ihsg-shell-v2";
 const SHELL = [
   "/",
   "/index.html",
@@ -13,6 +13,8 @@ const SHELL = [
   "/js/firebase.js",
   "/js/agent-memory.js",
   "/js/offline-store.js",
+  "/js/storage-store.js",
+  "/js/storage-ui.js",
   "/js/ai.js",
   "/js/orchestrate.js",
   "/js/render-report.js",
