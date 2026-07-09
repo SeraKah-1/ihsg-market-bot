@@ -160,14 +160,14 @@
             <label class="field">
               <span class="field-label">Search mode</span>
               <select id="search-mode">
-                <option value="auto">Auto — native if Grok/Gemini/GPT, else Jina+news</option>
-                <option value="FULL">FULL — native tools first, then Jina + news</option>
-                <option value="FALLBACK">FALLBACK — Jina + Google News (no native tools)</option>
+                <option value="auto">Auto — native + reasoning (semua model), cascade fallback</option>
+                <option value="FULL">FULL — native tools + reason cascade → Jina → news</option>
+                <option value="FALLBACK">FALLBACK — Jina + Google News (skip native)</option>
                 <option value="DEGRADED">DEGRADED — no search</option>
               </select>
             </label>
             <p class="fineprint" style="text-align:left;margin:0.35rem 0 0">
-              FULL: native <code>web_search</code> / <code>google_search</code> dulu; fallback Jina + news. Fetch halaman = Jina Reader (bukan 9Router).
+              Default: coba native web tools + reasoning <b>high→medium→low→off</b> untuk model apa pun; gagal → Jina search → news RSS.
             </p>
             <label class="check">
               <input id="force-refresh" type="checkbox" />

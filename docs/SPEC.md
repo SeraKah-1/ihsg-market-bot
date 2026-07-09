@@ -26,10 +26,15 @@
 
 ## Deep dive — Option C (agentic)
 - **No** pre-scrape Jina page fetch for deep dive.
-- FULL: multi-round agentic loop (`frontend/js/search/agentic-web.js`) with native `web_search` / `google_search` + reasoning params cascade.
-- Model **chooses queries dynamically** from hard price/context anomalies (not fixed 8-query list).
-- Prefer Research model with tools (Grok/Gemini); reasoning effort auto high/medium when model looks reasoning.
-- FALLBACK/failure: seed queries + Jina/news pack → `chatJson` synthesize (still no page fetch).  
+- FULL/auto: multi-round agentic loop for **any** model id.
+- Cascades (soft-fail):
+  - **Reasoning:** high → medium → low → off
+  - **Tools:** model-preferred → `web_search` → `google_search` → both
+  - **Search layers:** native → Jina `s.jina.ai` → Google News RSS
+- Model **chooses queries dynamically** from hard price/context anomalies.
+- Explicit FALLBACK skips native; DEGRADED skips all live web.
+- Native failure: seed queries + Jina/news pack → `chatJson` (no page fetch).  
+
 
 
 

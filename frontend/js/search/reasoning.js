@@ -1,18 +1,18 @@
 /**
- * Reasoning / thinking params for routers (OpenAI-compat, xAI, Gemini).
- * Soft-fail cascade when a model rejects thinking config.
+ * Reasoning / thinking params — default ON for all models.
+ * Cascade: high → medium → low → no reasoning (null).
  */
 import { appSettings, loadSettings } from "../state.js";
 import { buildThinkingLevelCascade, isThinkingConfigError } from "../thinking-config.js";
 
 /**
- * Does this model id look like a reasoning / thinking model?
+ * Heuristic: model name suggests native reasoning SKU (for logging / prefs only).
+ * Does NOT gate whether we try reasoning — we always try by default.
  */
 export function modelLooksReasoning(model) {
   loadSettings();
   const m = String(model || "").toLowerCase();
   if (!m) return false;
-  // built-in heuristics
   if (
     /o1|o3|o4|reasoning|thinking|r1|qwq|deepseek-r1|kimi|grok.*reason|reason.*grok/i.test(
       m
@@ -20,7 +20,6 @@ export function modelLooksReasoning(model) {
   ) {
     return true;
   }
-  // user keywords from settings
   const raw = appSettings.reasoningKeywords || "";
   const keys = String(raw)
     .split(/[,\s]+/)
@@ -30,59 +29,99 @@ export function modelLooksReasoning(model) {
 }
 
 /**
- * Preferred effort for deep-dive style work.
- * Reasoning models → high; others still try medium (some gateways ignore).
+ * Default preferred effort: high for ALL models (soft-fail cascade handles reject).
+ * override: "auto" | "high" | "medium" | "low" | "off" | null
  */
 export function preferredReasoningEffort(model, override = "auto") {
   if (override === "off" || override === null) return null;
   if (override && override !== "auto") return String(override);
-  if (modelLooksReasoning(model)) return "high";
-  // frontier web models often accept mild reasoning hints
-  const m = String(model || "").toLowerCase();
-  if (/grok|gemini|gpt-4|gpt-5|o[134]/.test(m)) return "medium";
-  return null;
+  // Default product policy: always start high
+  void model;
+  return "high";
 }
 
 /**
- * Mutate request body with best-effort reasoning fields.
- * Multiple keys — gateways ignore unknown ones.
+ * Mutate request body with best-effort reasoning fields (all providers).
+ * Inject broadly so unknown models still get a chance; cascade strips on reject.
  */
 export function injectReasoningParams(body, model, effort) {
   if (!body || !effort || effort === "off") return body;
   const e = String(effort).toLowerCase();
   const m = String(model || "").toLowerCase();
 
-  // Common OpenAI / multi-provider
   body.reasoning_effort = e;
   body.reasoning = { effort: e };
 
-  // xAI-style
-  if (m.includes("grok") || m.includes("xai")) {
+  // xAI
+  if (m.includes("grok") || m.includes("xai") || !m) {
     body.reasoning = { effort: e };
   }
 
-  // Gemini / Vertex thinking levels via various shapes
-  if (m.includes("gemini") || m.includes("google")) {
-    const level = e === "high" ? "high" : e === "low" ? "low" : "medium";
-    body.thinkingConfig = { thinkingLevel: level };
-    body.thinking = { thinking_level: level, thinkingLevel: level };
-    body.generationConfig = {
-      ...(body.generationConfig || {}),
-      thinkingConfig: { thinkingLevel: level.toUpperCase() }
-    };
-  }
+  // Gemini / Vertex-style — always attach so gemini-via-router works;
+  // non-gemini gateways usually ignore unknown keys.
+  const level = e === "high" ? "high" : e === "low" ? "low" : "medium";
+  body.thinkingConfig = { thinkingLevel: level };
+  body.thinking = { thinking_level: level, thinkingLevel: level };
+  body.generationConfig = {
+    ...(body.generationConfig || {}),
+    thinkingConfig: { thinkingLevel: level.toUpperCase() }
+  };
 
   return body;
 }
 
 /**
- * Cascade efforts to try when API rejects thinking config.
- * @returns {(string|null)[]}
+ * Always: high → medium → low → null (no reasoning).
+ * If preferred is medium, start mid; if off, [null] only.
  */
 export function reasoningEffortCascade(preferred = "high") {
   if (!preferred || preferred === "off") return [null];
-  // reuse thinking cascade names (high/medium/low/null)
   return buildThinkingLevelCascade(preferred);
+}
+
+/**
+ * Errors that warrant dropping reasoning level (not only pure thinking config).
+ */
+export function shouldDropReasoningLevel(err) {
+  if (isThinkingConfigError(err)) return true;
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (!msg) return false;
+  if (
+    msg.includes("reasoning_effort") ||
+    msg.includes("reasoning.effort") ||
+    msg.includes("unknown parameter") ||
+    msg.includes("unrecognized") ||
+    msg.includes("extra fields") ||
+    msg.includes("additional properties") ||
+    (msg.includes("400") && (msg.includes("reason") || msg.includes("think")))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Errors that warrant trying a different tool profile.
+ */
+export function shouldTryNextToolProfile(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (!msg) return false;
+  if (
+    msg.includes("tool") ||
+    msg.includes("web_search") ||
+    msg.includes("google_search") ||
+    msg.includes("unknown type") ||
+    msg.includes("not supported") ||
+    msg.includes("invalid tools") ||
+    msg.includes("server_side") ||
+    msg.includes("function") ||
+    msg.includes("400") ||
+    msg.includes("404") ||
+    msg.includes("422")
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export { isThinkingConfigError, buildThinkingLevelCascade };

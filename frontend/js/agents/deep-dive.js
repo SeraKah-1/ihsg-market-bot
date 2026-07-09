@@ -218,13 +218,10 @@ export async function runDeepDiveAgent({
   signal,
   onLog
 }) {
-  // Prefer research model for tools; fall back to judge
+  // Research model default (any model — native+reasoning tried with cascade)
   let model = researchModel();
   try {
-    if (!modelSupportsNativeSearch(model)) {
-      const j = modelFor("judge");
-      if (modelSupportsNativeSearch(j)) model = j;
-    }
+    if (!String(model || "").trim()) model = modelFor("judge");
   } catch {
     /* */
   }
@@ -235,11 +232,17 @@ export async function runDeepDiveAgent({
   const hard = buildHardContextPayload(ticker, marketPack, memory);
   const system = deepDiveSystem() + "\nSchema:\n" + schema;
 
-  // --- Path A: agentic native (Option C) — FULL only ---
-  const canAgentic = searchMode === "FULL" && modelSupportsNativeSearch(model);
+  // --- Path A: agentic native for any model unless DEGRADED / explicit FALLBACK ---
+  // FULL + auto both try native; FALLBACK skips to pack; DEGRADED no web.
+  const canAgentic =
+    searchMode !== "DEGRADED" &&
+    searchMode !== "FALLBACK" &&
+    modelSupportsNativeSearch(model);
 
   if (canAgentic) {
-    onLog?.("Deep dive Option C: agentic native tools + reasoning (query dinamis)…");
+    onLog?.(
+      "Deep dive agentic: native tools + reasoning cascade (high→med→low→off) untuk SEMUA model…"
+    );
     const agentic = await runAgenticNativeLoop({
       model,
       system,

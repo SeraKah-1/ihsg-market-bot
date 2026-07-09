@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS = {
   shortlistK: 8,
   maxIngest: 0,
   forceRefresh: false,
-  /** Prefer xAI web_search / Gemini google_search before Jina+news. */
+  /** Prefer native web tools (any model) before Jina+news. Default on. */
   preferNativeSearch: true,
   /**
    * Optional Jina key for browser→server body (overrides empty server env).
