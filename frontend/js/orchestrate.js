@@ -4,7 +4,7 @@ import { runResearch } from "./agents/research.js";
 import { runFear } from "./agents/fear.js";
 import { runPositive } from "./agents/positive.js";
 import { runJudge } from "./agents/judge.js";
-import { renderBriefingHtml } from "./render-report.js";
+import { renderBriefingHtml, updateKpisFromShortlist } from "./render-report.js";
 
 let abortCtrl = null;
 
@@ -175,36 +175,59 @@ async function collectSearch(shortlistPack, signal) {
 function renderShortlistTable(pack) {
   const el = document.getElementById("shortlist-table");
   if (!el) return;
+  updateKpisFromShortlist(pack);
+
   const rows = (pack.shortlist || [])
-    .map(
-      (s) => `<tr>
-      <td><strong>${esc(s.ticker)}</strong></td>
-      <td class="${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">${fmt(s.metrics?.changePct)}%</td>
+    .map((s) => {
+      const risk = s.flowHints?.exitLiquidityHint || "low";
+      const riskClass =
+        risk === "high" ? "chip-risk-high" : risk === "med" ? "chip-risk-med" : "";
+      const flowChip = s.flowHints?.flowAlive
+        ? `<span class="chip chip-flow">flow</span>`
+        : "";
+      return `<tr>
+      <td><span class="ticker">${esc(s.ticker)}</span></td>
+      <td class="${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.metrics?.changePct)}%</td>
       <td>${fmt(s.metrics?.rvol)}</td>
       <td>${fmt(s.metrics?.zRet)}</td>
-      <td>${esc((s.whySelected || []).join(", "))}</td>
-      <td>${esc(s.flowHints?.exitLiquidityHint || "")}</td>
-    </tr>`
-    )
+      <td>${(s.whySelected || []).map((w) => `<span class="chip">${esc(w)}</span>`).join("")}</td>
+      <td><span class="chip ${riskClass}">${esc(risk)}</span>${flowChip}</td>
+    </tr>`;
+    })
     .join("");
-  const ihsg = pack.ihsg;
+
   el.innerHTML = `
     <div class="meta-strip">
       <span>Day <b>${esc(pack.day)}</b></span>
-      <span>IHSG ${ihsg?.close != null ? fmt(ihsg.close) : "—"} (${fmt(ihsg?.changePct)}%)</span>
-      <span>Breadth ${pack.breadth?.adv}/${pack.breadth?.dec}</span>
-      <span>Coverage ${fmt(pack.dataQuality?.coveragePct)}%</span>
-      <span>${pack.dataQuality?.fromCache ? "CACHE" : "FRESH"}</span>
+      <span>Breadth <b>${pack.breadth?.adv ?? "—"}/${pack.breadth?.dec ?? "—"}</b></span>
+      <span>Coverage <b>${fmt(pack.dataQuality?.coveragePct)}%</b></span>
+      <span><b>${pack.dataQuality?.fromCache ? "cache" : "fresh"}</b></span>
     </div>
-    <table>
-      <thead><tr><th>Ticker</th><th>%</th><th>rvol</th><th>z</th><th>Why</th><th>ExitLiq hint</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <div class="table-wrap">
+      <table class="data">
+        <thead>
+          <tr>
+            <th scope="col">Ticker</th>
+            <th scope="col">%</th>
+            <th scope="col">RVOL</th>
+            <th scope="col">Z</th>
+            <th scope="col">Why</th>
+            <th scope="col">Risk</th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="6" class="muted">Tidak ada pick</td></tr>`}</tbody>
+      </table>
+    </div>`;
 }
 
 function fmt(n) {
   if (n == null || Number.isNaN(n)) return "—";
   return typeof n === "number" ? (Math.round(n * 100) / 100).toString() : String(n);
+}
+function fmtSigned(n) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  const x = Math.round(Number(n) * 100) / 100;
+  return (x > 0 ? "+" : "") + x;
 }
 function esc(s) {
   return String(s ?? "")
@@ -262,18 +285,25 @@ export function downloadHtml() {
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
   mermaid.initialize({ startOnLoad: true, theme: "dark" });
 <\/script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  body{font-family:system-ui,sans-serif;background:#0c0c0f;color:#e4e4e7;margin:0;padding:1.5rem;line-height:1.45}
-  table{border-collapse:collapse;width:100%;margin:1rem 0}
-  th,td{border:1px solid #3f3f46;padding:.4rem .55rem;text-align:left;font-size:.9rem}
-  th{background:#27272a}
-  .badge{display:inline-block;padding:.15rem .5rem;border-radius:4px;font-size:.75rem;font-weight:600}
-  .badge-follow{background:#14532d;color:#bbf7d0}
-  .badge-exit{background:#7f1d1d;color:#fecaca}
-  .badge-lean{background:#1e3a5f;color:#bfdbfe}
-  .card{border:1px solid #3f3f46;border-radius:8px;padding:1rem;margin:.75rem 0;background:#18181b}
-  .up{color:#4ade80}.down{color:#f87171}
-  h1,h2,h3{margin:.6rem 0}
+  :root{--bg:#0a0a0a;--surface:#141413;--border:rgba(255,255,255,.08);--fg:#f5f4ef;--fg2:#c8c6bc;--fg3:#8a887e;--accent:#c4a574;--up:#6bcb8a;--down:#f07178}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:2rem;line-height:1.5;max-width:900px;margin-inline:auto}
+  h1{font-family:"Instrument Serif",Georgia,serif;font-weight:400;letter-spacing:-.02em}
+  .badge{display:inline-flex;padding:.2rem .55rem;border-radius:999px;font-size:.65rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--border);margin-right:.3rem}
+  .badge-follow{background:rgba(107,203,138,.12);color:var(--up);border-color:rgba(107,203,138,.3)}
+  .badge-exit{background:rgba(240,113,120,.12);color:var(--down);border-color:rgba(240,113,120,.3)}
+  .badge-lean{background:rgba(196,165,116,.14);color:var(--accent);border-color:rgba(196,165,116,.35)}
+  .card{border:1px solid var(--border);border-radius:10px;padding:1rem;margin:.75rem 0;background:var(--surface)}
+  .report-section{border-bottom:1px solid var(--border)}
+  .report-section>summary{padding:.9rem 0;cursor:pointer;font-weight:500;list-style:none}
+  .report-section-body{padding:0 0 1rem;color:var(--fg2);font-size:.875rem}
+  .up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--fg3)}
+  table{border-collapse:collapse;width:100%;font-size:.85rem}
+  th,td{border-bottom:1px solid var(--border);padding:.4rem .5rem;text-align:left}
+  .report-head{margin-bottom:1.5rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}
+  .meta{font-family:"IBM Plex Mono",monospace;font-size:.75rem;color:var(--fg3)}
+  .badges{display:flex;flex-wrap:wrap;gap:.35rem;margin:.5rem 0}
 </style>
 </head><body>
 <script type="application/json" id="report-data">${JSON.stringify(b).replace(/</g, "\\u003c")}</script>

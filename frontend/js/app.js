@@ -1,6 +1,8 @@
 import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "./state.js";
 import { runPipeline, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
 
+const SHELL = () => document.querySelector(".shell");
+
 function bindSettingsForm() {
   loadSettings();
   const s = appSettings;
@@ -35,39 +37,126 @@ function readSettingsFromForm() {
     }
   });
   logLine("Settings saved");
+  setStatus("Settings tersimpan", "ok");
+}
+
+function setNavOpen(open) {
+  const shell = SHELL();
+  if (!shell) return;
+  shell.classList.toggle("nav-collapsed", !open);
+  const btn = $("btn-toggle-nav");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  // desktop default open; mobile start collapsed handled on resize
+}
+
+function setLogOpen(open) {
+  const shell = SHELL();
+  const drawer = $("log-drawer");
+  if (!shell || !drawer) return;
+  shell.classList.toggle("log-open", open);
+  if (open) {
+    drawer.hidden = false;
+  } else {
+    drawer.hidden = true;
+  }
+  const btn = $("btn-toggle-log");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function isMobile() {
+  return window.matchMedia("(max-width: 960px)").matches;
+}
+
+async function withBusy(btnIds, fn) {
+  const btns = btnIds.map((id) => $(id)).filter(Boolean);
+  btns.forEach((b) => (b.disabled = true));
+  try {
+    await fn();
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+
+function initChrome() {
+  // default: nav open on desktop, collapsed on mobile
+  setNavOpen(!isMobile());
+  setLogOpen(false);
+
+  $("btn-toggle-nav")?.addEventListener("click", () => {
+    const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
+    setNavOpen(open);
+  });
+  $("btn-toggle-nav-m")?.addEventListener("click", () => {
+    const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
+    setNavOpen(open);
+  });
+
+  $("btn-toggle-log")?.addEventListener("click", () => {
+    const open = $("btn-toggle-log").getAttribute("aria-expanded") !== "true";
+    setLogOpen(open);
+  });
+  $("btn-close-log")?.addEventListener("click", () => setLogOpen(false));
+
+  window.addEventListener("resize", () => {
+    if (!isMobile()) {
+      // keep desktop usable
+      if (SHELL()?.classList.contains("nav-collapsed") === false) return;
+    }
+  });
+
+  // keyboard: Escape closes drawers
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if ($("btn-toggle-log")?.getAttribute("aria-expanded") === "true") setLogOpen(false);
+      else if (isMobile() && $("btn-toggle-nav")?.getAttribute("aria-expanded") === "true") setNavOpen(false);
+    }
+    // Ctrl+\ toggle nav
+    if (e.key === "\\" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
+      setNavOpen(open);
+    }
+  });
 }
 
 function init() {
   bindSettingsForm();
+  initChrome();
+
   $("btn-save-settings")?.addEventListener("click", readSettingsFromForm);
-  $("btn-run")?.addEventListener("click", async () => {
-    readSettingsFromForm();
-    $("btn-run").disabled = true;
-    try {
+
+  const runFull = () =>
+    withBusy(["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m"], async () => {
+      readSettingsFromForm();
+      setLogOpen(true);
       await runPipeline({ skipAi: false });
-    } finally {
-      $("btn-run").disabled = false;
-    }
-  });
-  $("btn-run-data")?.addEventListener("click", async () => {
-    readSettingsFromForm();
-    $("btn-run-data").disabled = true;
-    try {
+    });
+
+  const runData = () =>
+    withBusy(["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m"], async () => {
+      readSettingsFromForm();
+      setLogOpen(true);
       await runPipeline({ skipAi: true });
-    } finally {
-      $("btn-run-data").disabled = false;
-    }
-  });
+    });
+
+  $("btn-run")?.addEventListener("click", runFull);
+  $("btn-run-m")?.addEventListener("click", runFull);
+  $("btn-run-data")?.addEventListener("click", runData);
+  $("btn-run-data-m")?.addEventListener("click", runData);
   $("btn-abort")?.addEventListener("click", () => abortRun());
   $("btn-dl-json")?.addEventListener("click", () => downloadJson());
   $("btn-dl-html")?.addEventListener("click", () => downloadHtml());
 
   fetch("/api/health")
     .then((r) => r.json())
-    .then((j) => logLine("API ok: " + j.service))
-    .catch((e) => logLine("API fail: " + e.message, "err"));
-
-  setStatus("Siap. Isi custom router lalu Run.", "info");
+    .then((j) => {
+      logLine("API ok · " + j.service);
+      setStatus("Siap · isi router lalu Run", "info");
+    })
+    .catch((e) => {
+      logLine("API fail: " + e.message, "err");
+      setStatus("API offline", "err");
+    });
 }
 
 init();

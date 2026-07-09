@@ -3,76 +3,223 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IHSG Market Bot</title>
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>IHSG Market · Briefing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script type="module">
     import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({ startOnLoad: false, theme: "dark" });
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
     window.mermaid = mermaid;
   </script>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="layout">
-    <aside class="panel settings">
-      <h1>IHSG Market Bot</h1>
-      <p class="tagline">Follow the money · FOMO boleh · anti exit-liquidity · data dulu</p>
+  <a class="skip-link" href="#main-content">Loncat ke konten</a>
 
-      <h2>Custom router</h2>
-      <label>Endpoint <input id="custom-endpoint" type="text" placeholder="http://127.0.0.1:20128/v1" /></label>
-      <label>API key <input id="custom-api-key" type="password" placeholder="sk-..." /></label>
-      <label class="row"><input id="use-cors-proxy" type="checkbox" checked /> Use CORS proxy</label>
-
-      <h2>Models</h2>
-      <label>Research <input id="model-research" type="text" /></label>
-      <label>Fear <input id="model-fear" type="text" /></label>
-      <label>Positive <input id="model-positive" type="text" /></label>
-      <label>Judge <input id="model-judge" type="text" /></label>
-
-      <h2>Run options</h2>
-      <label>Shortlist K <input id="shortlist-k" type="number" min="3" max="20" value="8" /></label>
-      <label>Max ingest (0=all) <input id="max-ingest" type="number" min="0" value="0" title="Isi 40–80 untuk smoke test cepat" /></label>
-      <label class="row"><input id="force-refresh" type="checkbox" /> Force refresh cache</label>
-      <label>Search mode
-        <select id="search-mode">
-          <option value="auto">auto (DDG fallback)</option>
-          <option value="FALLBACK">FALLBACK (DDG)</option>
-          <option value="DEGRADED">DEGRADED (no search)</option>
-          <option value="FULL">FULL (native — if model supports)</option>
-        </select>
-      </label>
-
-      <div class="btn-row">
-        <button id="btn-save-settings" type="button">Save settings</button>
-        <button id="btn-run-data" type="button" class="secondary">Data only</button>
-        <button id="btn-run" type="button" class="primary">Run briefing</button>
-        <button id="btn-abort" type="button" class="danger">Abort</button>
+  <!-- Top bar: primary chrome (xAI/Anthropic-like restraint) -->
+  <header class="topbar" role="banner">
+    <div class="topbar-left">
+      <button type="button" class="icon-btn" id="btn-toggle-nav" aria-expanded="true" aria-controls="side-nav" title="Toggle settings (⌘\)">
+        <span class="icon" aria-hidden="true">☰</span>
+        <span class="sr-only">Toggle panel settings</span>
+      </button>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div class="brand-text">
+          <span class="brand-name">IHSG Market</span>
+          <span class="brand-sub">Briefing</span>
+        </div>
       </div>
-      <div class="btn-row">
-        <button id="btn-dl-json" type="button" class="secondary">Download JSON</button>
-        <button id="btn-dl-html" type="button" class="secondary">Download HTML</button>
+    </div>
+
+    <div class="topbar-center" aria-live="polite">
+      <p id="run-status" class="status-pill" data-kind="info" role="status">Siap</p>
+    </div>
+
+    <div class="topbar-actions" role="toolbar" aria-label="Aksi utama">
+      <button type="button" class="btn btn-ghost" id="btn-run-data" title="Ingest + shortlist tanpa AI">
+        Data only
+      </button>
+      <button type="button" class="btn btn-primary" id="btn-run" title="Full briefing pipeline">
+        Run briefing
+      </button>
+      <button type="button" class="btn btn-danger-ghost" id="btn-abort" title="Batalkan run" aria-label="Abort">
+        Abort
+      </button>
+      <div class="divider-v" aria-hidden="true"></div>
+      <button type="button" class="btn btn-ghost" id="btn-dl-json" title="Export JSON">JSON</button>
+      <button type="button" class="btn btn-ghost" id="btn-dl-html" title="Export HTML">HTML</button>
+      <button type="button" class="icon-btn" id="btn-toggle-log" aria-expanded="false" aria-controls="log-drawer" title="Activity log">
+        <span class="icon" aria-hidden="true">⌘</span>
+        <span class="sr-only">Toggle log</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- Settings: progressive disclosure -->
+    <aside id="side-nav" class="side-nav" aria-label="Settings">
+      <div class="side-nav-scroll">
+        <p class="side-kicker">Stance</p>
+        <p class="side-blurb">Follow the money · FOMO boleh · anti exit-liquidity · data dulu</p>
+
+        <details class="acc" open>
+          <summary class="acc-sum">
+            <span>Router</span>
+            <span class="acc-hint">custom endpoint</span>
+          </summary>
+          <div class="acc-body">
+            <label class="field">
+              <span class="field-label">Endpoint</span>
+              <input id="custom-endpoint" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:20128/v1" />
+            </label>
+            <label class="field">
+              <span class="field-label">API key</span>
+              <input id="custom-api-key" type="password" autocomplete="off" placeholder="••••••••" />
+            </label>
+            <label class="check">
+              <input id="use-cors-proxy" type="checkbox" checked />
+              <span>CORS proxy</span>
+            </label>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary class="acc-sum">
+            <span>Models</span>
+            <span class="acc-hint">per role</span>
+          </summary>
+          <div class="acc-body">
+            <label class="field"><span class="field-label">Research</span><input id="model-research" type="text" spellcheck="false" /></label>
+            <label class="field"><span class="field-label">Fear</span><input id="model-fear" type="text" spellcheck="false" /></label>
+            <label class="field"><span class="field-label">Positive</span><input id="model-positive" type="text" spellcheck="false" /></label>
+            <label class="field"><span class="field-label">Judge</span><input id="model-judge" type="text" spellcheck="false" /></label>
+          </div>
+        </details>
+
+        <details class="acc" open>
+          <summary class="acc-sum">
+            <span>Run options</span>
+            <span class="acc-hint">perf</span>
+          </summary>
+          <div class="acc-body">
+            <div class="field-grid">
+              <label class="field">
+                <span class="field-label">Shortlist K</span>
+                <input id="shortlist-k" type="number" min="3" max="20" value="8" />
+              </label>
+              <label class="field">
+                <span class="field-label">Max ingest</span>
+                <input id="max-ingest" type="number" min="0" value="0" title="0 = all · 40–80 smoke cepat" />
+              </label>
+            </div>
+            <label class="field">
+              <span class="field-label">Search mode</span>
+              <select id="search-mode">
+                <option value="auto">Auto (fallback news)</option>
+                <option value="FALLBACK">FALLBACK</option>
+                <option value="DEGRADED">DEGRADED — no search</option>
+                <option value="FULL">FULL — native if available</option>
+              </select>
+            </label>
+            <label class="check">
+              <input id="force-refresh" type="checkbox" />
+              <span>Force refresh cache</span>
+            </label>
+          </div>
+        </details>
+
+        <div class="side-footer">
+          <button type="button" class="btn btn-secondary btn-block" id="btn-save-settings">Save settings</button>
+          <p class="fineprint">Local-first · free data · personal use</p>
+        </div>
       </div>
-      <p id="run-status" class="status">—</p>
     </aside>
 
-    <main class="panel main">
-      <section>
-        <h2>Shortlist</h2>
-        <div id="shortlist-table" class="table-wrap"><p class="muted">Belum ada data. Klik Data only atau Run.</p></div>
+    <!-- Main canvas -->
+    <main id="main-content" class="main" tabindex="-1">
+      <!-- KPI strip: summary tier -->
+      <section class="kpi-strip" id="kpi-strip" aria-label="Ringkasan pasar">
+        <article class="kpi empty">
+          <span class="kpi-label">IHSG</span>
+          <span class="kpi-value" id="kpi-ihsg">—</span>
+          <span class="kpi-meta" id="kpi-ihsg-chg">tunggu data</span>
+        </article>
+        <article class="kpi empty">
+          <span class="kpi-label">Breadth</span>
+          <span class="kpi-value" id="kpi-breadth">—</span>
+          <span class="kpi-meta">adv / dec</span>
+        </article>
+        <article class="kpi empty">
+          <span class="kpi-label">Coverage</span>
+          <span class="kpi-value" id="kpi-cov">—</span>
+          <span class="kpi-meta" id="kpi-cache">cache / fresh</span>
+        </article>
+        <article class="kpi empty">
+          <span class="kpi-label">Lean</span>
+          <span class="kpi-value" id="kpi-lean">—</span>
+          <span class="kpi-meta" id="kpi-priority">judge</span>
+        </article>
       </section>
-      <section>
-        <h2>Report</h2>
-        <div id="report-view" class="report"><p class="muted">JSON→HTML muncul di sini setelah Judge.</p></div>
+
+      <!-- Shortlist: context tier -->
+      <section class="block" aria-labelledby="h-shortlist">
+        <header class="block-head">
+          <div>
+            <p class="eyebrow">Screen</p>
+            <h2 id="h-shortlist">Shortlist</h2>
+          </div>
+          <p class="block-desc">Code-ranked needles · AI hanya di sini</p>
+        </header>
+        <div id="shortlist-table" class="surface">
+          <div class="empty-state">
+            <p class="empty-title">Belum ada tape</p>
+            <p class="empty-body">Tekan <kbd>Data only</kbd> untuk ingest, atau <kbd>Run briefing</kbd> untuk full pipeline.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Report: detail tier -->
+      <section class="block" aria-labelledby="h-report">
+        <header class="block-head">
+          <div>
+            <p class="eyebrow">Analysis</p>
+            <h2 id="h-report">Briefing</h2>
+          </div>
+          <p class="block-desc">JSON → HTML · collapsible sections</p>
+        </header>
+        <div id="report-view" class="report surface">
+          <div class="empty-state">
+            <p class="empty-title">Belum ada laporan</p>
+            <p class="empty-body">Judge output muncul di sini. Export JSON/HTML dari top bar.</p>
+          </div>
+        </div>
       </section>
     </main>
 
-    <aside class="panel log">
-      <h2>Log</h2>
-      <div id="log-stream" class="log-stream"></div>
+    <!-- Log drawer -->
+    <aside id="log-drawer" class="log-drawer" aria-label="Activity log" hidden>
+      <header class="log-head">
+        <h2>Activity</h2>
+        <button type="button" class="icon-btn" id="btn-close-log" aria-label="Tutup log">✕</button>
+      </header>
+      <div id="log-stream" class="log-stream" role="log" aria-live="polite" aria-relevant="additions"></div>
     </aside>
   </div>
+
+  <!-- Mobile bottom bar -->
+  <nav class="mobile-bar" aria-label="Aksi mobile">
+    <button type="button" class="btn btn-ghost" id="btn-run-data-m">Data</button>
+    <button type="button" class="btn btn-primary" id="btn-run-m">Run</button>
+    <button type="button" class="btn btn-ghost" id="btn-toggle-nav-m">Settings</button>
+  </nav>
+
   <script type="module" src="/js/app.js"></script>
 </body>
 </html>
