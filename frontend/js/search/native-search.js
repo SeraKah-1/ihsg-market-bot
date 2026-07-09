@@ -374,8 +374,17 @@ export function buildToolProfileCascade(model, { unrestrictedWeb = false } = {})
   return out;
 }
 
+function isNativeNetworkError(err) {
+  const m = String(err?.message || err || "");
+  if (/abort/i.test(m)) return false;
+  return /Failed to fetch|NetworkError|ECONNRESET|ETIMEDOUT|fetch failed|Load failed/i.test(
+    m
+  );
+}
+
 /**
  * Single attempt: Responses API + custom router.
+ * Retries transient Failed to fetch (proxy/long web_search drop).
  */
 async function attemptNativeOnce({
   model,
@@ -385,7 +394,8 @@ async function attemptNativeOnce({
   tools,
   toolKind,
   temperature: _temperature = null,
-  reasoningEffort = null
+  reasoningEffort = null,
+  retries = 2
 }) {
   void _temperature;
   let endpoint;
@@ -416,83 +426,108 @@ async function attemptNativeOnce({
   let url = buildResponsesUrl(endpoint);
   if (useProxy) url = getProxyUrl(url);
 
+  // Cap user payload — huge agentic transcripts kill long-lived proxy connections
+  const userCapped =
+    typeof user === "string" && user.length > 48_000
+      ? user.slice(0, 48_000) + "\n…[truncated for native transport]"
+      : user;
+
   const body = buildNativeResponsesBody({
     model,
     system,
-    user,
+    user: userCapped,
     tools,
     temperature: null,
     reasoningEffort
   });
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal
-    });
+  let lastErr = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal
+      });
 
-    const rawText = await res.text();
+      const rawText = await res.text();
 
-    if (!res.ok) {
+      if (!res.ok) {
+        return {
+          content: "",
+          citations: [],
+          toolTraces: [],
+          mode: "NATIVE_FAILED",
+          error: `responses ${res.status}: ${rawText.slice(0, 320)}`,
+          toolKind,
+          reasoningEffort: reasoningEffort || null,
+          ok: false,
+          requestUrl: url.replace(/\?.*$/, "")
+        };
+      }
+
+      const parsed = parseResponsesPayload(rawText);
+      if (parsed.content || (parsed.citations && parsed.citations.length)) {
+        return {
+          content: parsed.content || "",
+          citations: parsed.citations || [],
+          toolTraces: parsed.toolTraces || [],
+          raw: parsed.data,
+          mode: parsed.via === "sse" ? "NATIVE_RESPONSES_SSE" : "NATIVE_RESPONSES",
+          toolKind,
+          reasoningEffort: reasoningEffort || null,
+          ok: true,
+          requestUrl: url.replace(/\?.*$/, ""),
+          parseVia: parsed.via
+        };
+      }
+
+      return {
+        content: "",
+        citations: parsed.citations || [],
+        toolTraces: parsed.toolTraces || [],
+        mode: "NATIVE_FAILED",
+        error:
+          parsed.error ||
+          (looksLikeSse(rawText)
+            ? "responses_sse_empty (stream parsed, no text/citations)"
+            : "responses_empty_output"),
+        toolKind,
+        reasoningEffort: reasoningEffort || null,
+        ok: false,
+        raw: parsed.data || rawText.slice(0, 500)
+      };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      lastErr = e;
+      if (isNativeNetworkError(e) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+        continue;
+      }
       return {
         content: "",
         citations: [],
         toolTraces: [],
         mode: "NATIVE_FAILED",
-        error: `responses ${res.status}: ${rawText.slice(0, 320)}`,
+        error: String(e.message || e),
         toolKind,
         reasoningEffort: reasoningEffort || null,
-        ok: false,
-        requestUrl: url.replace(/\?.*$/, "")
+        ok: false
       };
     }
-
-    const parsed = parseResponsesPayload(rawText);
-    if (parsed.content || (parsed.citations && parsed.citations.length)) {
-      return {
-        content: parsed.content || "",
-        citations: parsed.citations || [],
-        toolTraces: parsed.toolTraces || [],
-        raw: parsed.data,
-        mode: parsed.via === "sse" ? "NATIVE_RESPONSES_SSE" : "NATIVE_RESPONSES",
-        toolKind,
-        reasoningEffort: reasoningEffort || null,
-        ok: true,
-        requestUrl: url.replace(/\?.*$/, ""),
-        parseVia: parsed.via
-      };
-    }
-
-    return {
-      content: "",
-      citations: parsed.citations || [],
-      toolTraces: parsed.toolTraces || [],
-      mode: "NATIVE_FAILED",
-      error:
-        parsed.error ||
-        (looksLikeSse(rawText)
-          ? "responses_sse_empty (stream parsed, no text/citations)"
-          : "responses_empty_output"),
-      toolKind,
-      reasoningEffort: reasoningEffort || null,
-      ok: false,
-      raw: parsed.data || rawText.slice(0, 500)
-    };
-  } catch (e) {
-    if (signal?.aborted) throw e;
-    return {
-      content: "",
-      citations: [],
-      toolTraces: [],
-      mode: "NATIVE_FAILED",
-      error: String(e.message || e),
-      toolKind,
-      reasoningEffort: reasoningEffort || null,
-      ok: false
-    };
   }
+  return {
+    content: "",
+    citations: [],
+    toolTraces: [],
+    mode: "NATIVE_FAILED",
+    error: String(lastErr?.message || lastErr || "native_fetch_failed"),
+    toolKind,
+    reasoningEffort: reasoningEffort || null,
+    ok: false
+  };
 }
 
 /**
@@ -528,6 +563,7 @@ export async function chatWithNativeWebSearch({
   const efforts = reasoningEffortCascade(preferred ?? "high");
   const attempts = [];
   let last = null;
+  let networkFails = 0;
 
   for (const profile of toolProfiles) {
     for (const effort of efforts) {
@@ -562,7 +598,7 @@ export async function chatWithNativeWebSearch({
             try {
               content = extractJson(content);
             } catch {
-              /* keep raw */
+              /* keep raw — still count as native success */
             }
           }
         }
@@ -588,6 +624,26 @@ export async function chatWithNativeWebSearch({
           reasoningEffort: effort || null,
           cascadeAttempts: attempts
         };
+      }
+      // Don't burn high→med→low×profiles after repeated network drops
+      if (/Failed to fetch|NetworkError|fetch failed|Load failed/i.test(err)) {
+        networkFails++;
+        if (networkFails >= 2) {
+          onLog?.(
+            "Native abort cascade: repeated Failed to fetch (router/proxy drop)",
+            "warn"
+          );
+          return {
+            content: "",
+            citations: [],
+            toolTraces: [],
+            mode: "NATIVE_FAILED",
+            error: err,
+            toolKind: profile.kind,
+            reasoningEffort: effort || null,
+            cascadeAttempts: attempts
+          };
+        }
       }
       if (effort && shouldDropReasoningLevel(err)) {
         continue;
