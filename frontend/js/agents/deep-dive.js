@@ -299,8 +299,7 @@ export async function runDeepDiveAgent({
       onLog,
       maxRounds: 3,
       unrestrictedWeb: true,
-      temperature: 0.35,
-      reasoningEffort: "auto",
+
       finalSchemaHint: "Schema deep_dive (JSON):\n" + schema
     });
 

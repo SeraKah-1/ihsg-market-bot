@@ -1,7 +1,6 @@
 /**
- * Agentic native web research — default for any model.
- * Multi-round; each call uses chatWithNativeWebSearch cascades:
- *   tools profiles + reasoning high→medium→low→off
+ * Agentic native web research — multi-round Responses API web_search.
+ * Each round: docs-minimal body (model + input + tools), custom router, NO reasoning.
  * Outer fallback (Jina/news) handled by caller if this returns NATIVE_FAILED.
  */
 import { extractJson } from "../ai.js";
@@ -27,11 +26,13 @@ export async function runAgenticNativeLoop({
   onLog = null,
   maxRounds = 3,
   unrestrictedWeb = true,
-  temperature = 0.35,
-  reasoningEffort = "auto",
+  temperature: _temperature = undefined,
+  reasoningEffort: _reasoningEffort = "off",
   intermediateHint = null,
   finalSchemaHint = null
 }) {
+  void _temperature;
+  void _reasoningEffort;
   if (!modelSupportsNativeSearch(model)) {
     return {
       content: "",
@@ -66,7 +67,7 @@ AGENTIC WEB (wajib coba):
   for (let round = 1; round <= maxRounds; round++) {
     const isFinal = round === maxRounds;
     onLog?.(
-      `Agentic r${round}/${maxRounds} · preferTools=${toolHint} · reason=cascade`
+      `Agentic r${round}/${maxRounds} · preferTools=${toolHint} · Responses no-reasoning`
     );
 
     let roundUser;
@@ -110,14 +111,12 @@ Jika sudah cukup, status=done.`);
         : gatherSystem,
       user: roundUser,
       signal,
-      temperature: isFinal ? 0.3 : temperature,
       isJson: true,
       unrestrictedWeb,
-      reasoningEffort,
       onLog
     });
 
-    usedEffort = result.reasoningEffort ?? usedEffort;
+    usedEffort = null;
 
     if (result.mode === "NATIVE_FAILED" || !result.content) {
       searchLog.push({
@@ -175,9 +174,9 @@ Jika sudah cukup, status=done.`);
     transcript += `\n--- round ${round} ---\n${piece.slice(0, 8000)}\n`;
 
     onLog?.(
-      `Agentic r${round} ok mode=${result.mode} tools=${result.toolKind || "?"} reason=${
-        result.reasoningEffort || "off"
-      } findings=${parsed?.findings?.length ?? "—"}`
+      `Agentic r${round} ok mode=${result.mode} tools=${result.toolKind || "?"} findings=${
+        parsed?.findings?.length ?? "—"
+      }`
     );
 
     if (!isFinal && parsed?.status === "done" && (parsed.findings || []).length >= 3) {
@@ -193,10 +192,8 @@ Jika sudah cukup, status=done.`);
           "\n\nFINAL: JSON laporan saja. Boleh search sekali lagi jika hole kritis.",
         user: finalUser,
         signal,
-        temperature: 0.3,
         isJson: true,
         unrestrictedWeb,
-        reasoningEffort,
         onLog
       });
       if (finalRes.mode !== "NATIVE_FAILED" && finalRes.content) {
@@ -204,13 +201,13 @@ Jika sudah cukup, status=done.`);
         for (const t of finalRes.toolTraces || []) allTraces.push(t);
         lastContent = finalRes.content;
         lastMode = finalRes.mode + "+early_final";
-        usedEffort = finalRes.reasoningEffort ?? usedEffort;
+        usedEffort = null;
         searchLog.push({
           round: round + 0.5,
           ok: true,
           mode: finalRes.mode,
           final: true,
-          reasoningEffort: finalRes.reasoningEffort
+          reasoningEffort: null
         });
       }
       break;

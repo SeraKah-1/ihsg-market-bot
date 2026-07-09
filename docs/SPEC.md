@@ -29,8 +29,8 @@
 - FULL/auto: multi-round agentic loop for **any** model id.
 - Cascades (soft-fail):
   - **Reasoning:** high → medium → low → off
-  - **Tools:** model-preferred → bare `web_search` → `google_search` → both  
-  - **xAI Grok:** Responses API tool per docs: `{ "type": "web_search", "filters": { "allowed_domains": [...] } }` (max 5); deep dive strips filters
+  - **Native transport:** `POST {customEndpoint}/v1/responses` with body **only** `{ model, input:[{role:user,content}], tools:[{type:web_search}] }` — custom router API key; **no** temperature / reasoning / thinking  
+  - **Tools cascade:** bare `web_search` (docs) → optional IDX `filters.allowed_domains` → `google_search` → both
   - **Search layers:** native → Jina `s.jina.ai` → Google News RSS
 - Model **chooses queries dynamically** from hard price/context anomalies.
 - Explicit FALLBACK skips native; DEGRADED skips all live web.

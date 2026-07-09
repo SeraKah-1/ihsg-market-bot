@@ -1,22 +1,18 @@
 /**
- * Native web search for ALL models (default try).
+ * Native web search — xAI / OpenAI Responses API (docs-minimal).
  *
- * Cascades:
- *   reasoning: high → medium → low → off
- *   tools:     model-preferred → web_search → google_search → web_search+google_search
- *   transport: /v1/responses → /chat/completions
+ * Matches official pattern:
+ *   POST {customBase}/v1/responses
+ *   { model, input: [{ role: "user", content }], tools: [{ type: "web_search" }] }
  *
- * Outer layers (hybrid): native → Jina search → Google News RSS
+ * - API key + base URL from Settings (custom router), NOT hardcoded api.x.ai
+ * - NO temperature, NO reasoning, NO thinking, NO extra params
+ * - Tool profile cascade only (bare web_search first)
+ * - Outer hybrid: native → Jina search → Google News RSS
  */
 import { resolveProviderCredentials, getProxyUrl, extractJson, modelFor } from "../ai.js";
 import { appSettings, loadSettings } from "../state.js";
-import {
-  injectReasoningParams,
-  preferredReasoningEffort,
-  reasoningEffortCascade,
-  shouldDropReasoningLevel,
-  shouldTryNextToolProfile
-} from "./reasoning.js";
+import { shouldTryNextToolProfile } from "./reasoning.js";
 
 /** IDX / ID finance domains — xAI allows max 5 allowed_domains */
 export const IDX_SEARCH_DOMAINS = [
@@ -31,18 +27,6 @@ export const IDX_SEARCH_DOMAINS = [
  * Build xAI / OpenAI Responses API web_search tool object per official docs:
  *   { "type": "web_search" }
  *   { "type": "web_search", "filters": { "allowed_domains": [...] } }
- *   { "type": "web_search", "filters": { "excluded_domains": [...] } }
- *   optional: enable_image_understanding, enable_image_search
- *
- * Docs: https://docs.x.ai/developers/tools/web-search
- * - allowed_domains and excluded_domains cannot both be set
- * - max 5 domains for xAI
- *
- * @param {object} [opts]
- * @param {string[]} [opts.allowedDomains]
- * @param {string[]} [opts.excludedDomains]
- * @param {boolean} [opts.enableImageUnderstanding]
- * @param {boolean} [opts.enableImageSearch]
  */
 export function buildWebSearchTool(opts = {}) {
   const tool = { type: "web_search" };
@@ -54,7 +38,6 @@ export function buildWebSearchTool(opts = {}) {
     : [];
 
   if (allowed.length && excluded.length) {
-    // docs: cannot set both — prefer allow-list
     tool.filters = { allowed_domains: allowed };
   } else if (allowed.length) {
     tool.filters = { allowed_domains: allowed };
@@ -71,7 +54,6 @@ export function buildWebSearchTool(opts = {}) {
   return tool;
 }
 
-/** Strip domain filters / image flags → bare web_search (deep dive / unrestricted). */
 export function stripWebSearchFilters(tool) {
   if (!tool || tool.type !== "web_search") return tool;
   return { type: "web_search" };
@@ -79,7 +61,6 @@ export function stripWebSearchFilters(tool) {
 
 /**
  * Infer preferred native search tool config from model id (hint only).
- * Unknown models still get web_search tried via cascade.
  */
 export function detectNativeSearchTool(model) {
   const m = String(model || "").toLowerCase();
@@ -89,10 +70,9 @@ export function detectNativeSearchTool(model) {
     m.startsWith("x-ai/") ||
     m.includes("xai-")
   ) {
-    // xAI Responses: type web_search + filters.allowed_domains (max 5)
     return {
       kind: "xai_web_search",
-      tools: [buildWebSearchTool({ allowedDomains: IDX_SEARCH_DOMAINS })]
+      tools: [buildWebSearchTool()] // docs-basic: bare web_search
     };
   }
   if (m.includes("gemini") || m.includes("google/")) {
@@ -102,49 +82,86 @@ export function detectNativeSearchTool(model) {
     };
   }
   if (m.includes("gpt") || m.includes("o1") || m.includes("o3") || m.includes("o4")) {
-    // OpenAI Responses also uses filters.allowed_domains — bare tool by default
     return {
       kind: "openai_web_search",
       tools: [buildWebSearchTool()]
     };
   }
-  // Default try OpenAI/xAI-style web_search for every model
   return { kind: "generic_web_search", tools: [buildWebSearchTool()] };
 }
 
-/**
- * Product policy: always try native tools for any non-empty model id.
- * Actual support is discovered at runtime via cascade soft-fail.
- */
 export function modelSupportsNativeSearch(model) {
   return !!String(model || "").trim();
 }
 
 /**
- * Ordered tool profiles to attempt (deduped by JSON).
- * Grok preferred: filtered web_search (docs schema) → bare web_search → google → both.
+ * Build Responses API URL from custom router base (settings endpoint).
+ * e.g. https://api.x.ai/v1  →  https://api.x.ai/v1/responses
+ *      https://my.router.com →  https://my.router.com/v1/responses
+ */
+export function buildResponsesUrl(endpoint) {
+  const base = String(endpoint || "").replace(/\/+$/, "");
+  if (!base) return "";
+  if (base.endsWith("/responses")) return base;
+  if (base.endsWith("/v1")) return `${base}/responses`;
+  return `${base}/v1/responses`;
+}
+
+/**
+ * Docs-minimal Responses body — model + input + tools only.
+ * System prompt digabung ke user content (docs contoh hanya role user).
+ */
+export function buildNativeResponsesBody({ model, system, user, tools }) {
+  const content =
+    system && String(system).trim()
+      ? `${String(system).trim()}\n\n---\n\n${String(user || "")}`
+      : String(user || "");
+  return {
+    model,
+    input: [{ role: "user", content }],
+    tools: tools && tools.length ? tools : [{ type: "web_search" }]
+  };
+}
+
+/**
+ * Tool profiles only (no reasoning cascade).
+ * 1) bare web_search (docs)
+ * 2) filtered IDX domains (briefing only)
+ * 3) google_search
+ * 4) both
  */
 export function buildToolProfileCascade(model, { unrestrictedWeb = false } = {}) {
   const preferred = detectNativeSearchTool(model);
-  let first = preferred.tools;
-  if (unrestrictedWeb) {
-    // drop domain filters for deep dive (docs bare tool)
-    first = first.map((t) => {
-      if (t && t.type === "web_search") return stripWebSearchFilters(t);
-      return t;
+  const profiles = [];
+
+  // Always docs-first bare web_search for max gateway compatibility
+  profiles.push({ kind: "web_search", tools: [buildWebSearchTool()] });
+
+  // Model preferred if different (e.g. google_search for Gemini)
+  const prefJson = JSON.stringify(preferred.tools);
+  if (prefJson !== JSON.stringify([{ type: "web_search" }])) {
+    let tools = preferred.tools;
+    if (unrestrictedWeb) {
+      tools = tools.map((t) =>
+        t && t.type === "web_search" ? stripWebSearchFilters(t) : t
+      );
+    }
+    profiles.unshift({ kind: preferred.kind, tools });
+  }
+
+  if (!unrestrictedWeb) {
+    profiles.push({
+      kind: "web_search_idx_filter",
+      tools: [buildWebSearchTool({ allowedDomains: IDX_SEARCH_DOMAINS })]
     });
   }
-  const profiles = [
-    { kind: preferred.kind, tools: first },
-    // Always try bare web_search next (docs basic usage) if preferred had filters
-    { kind: "web_search", tools: [buildWebSearchTool()] },
-    { kind: "google_search", tools: [{ type: "google_search" }] },
-    {
-      kind: "web_search+google_search",
-      tools: [buildWebSearchTool(), { type: "google_search" }]
-    }
-  ];
-  // dedupe by tools JSON
+
+  profiles.push({ kind: "google_search", tools: [{ type: "google_search" }] });
+  profiles.push({
+    kind: "web_search+google_search",
+    tools: [buildWebSearchTool(), { type: "google_search" }]
+  });
+
   const seen = new Set();
   const out = [];
   for (const p of profiles) {
@@ -157,148 +174,15 @@ export function buildToolProfileCascade(model, { unrestrictedWeb = false } = {})
 }
 
 /**
- * Single attempt: one tool profile + one reasoning effort.
- * @private
+ * Single attempt: Responses API only, docs-minimal body.
+ * Credentials = custom router (Settings endpoint + API key).
  */
-async function attemptNativeOnce({
-  model,
-  system,
-  user,
-  signal,
-  temperature,
-  isJson,
-  tools,
-  toolKind,
-  reasoningEffort
-}) {
-  const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-    "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
-    "X-Title": "IHSG Market Bot"
-  };
-
-  // --- Responses API ---
+async function attemptNativeOnce({ model, system, user, signal, tools, toolKind }) {
+  let endpoint;
+  let apiKey;
+  let useProxy;
   try {
-    const base = endpoint.replace(/\/+$/, "");
-    let url = base.endsWith("/v1") ? `${base}/responses` : `${base}/v1/responses`;
-    if (useProxy) url = getProxyUrl(url);
-
-    const body = injectReasoningParams(
-      {
-        model,
-        input: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ],
-        tools,
-        temperature
-      },
-      model,
-      reasoningEffort
-    );
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const parsed = parseResponsesApi(data, isJson);
-      if (parsed.content) {
-        return {
-          ...parsed,
-          mode: "NATIVE_RESPONSES",
-          toolKind,
-          reasoningEffort,
-          ok: true
-        };
-      }
-    } else {
-      const t = await res.text();
-      if (res.status >= 400) {
-        return {
-          content: "",
-          citations: [],
-          toolTraces: [],
-          mode: "NATIVE_FAILED",
-          error: `responses ${res.status}: ${t.slice(0, 280)}`,
-          toolKind,
-          reasoningEffort,
-          ok: false
-        };
-      }
-    }
-  } catch (e) {
-    // fall through to chat
-    if (signal?.aborted) throw e;
-  }
-
-  // --- Chat Completions ---
-  try {
-    let url = `${endpoint}/chat/completions`;
-    if (useProxy) url = getProxyUrl(url);
-    const body = injectReasoningParams(
-      {
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ],
-        temperature,
-        tools,
-        tool_choice: "auto"
-      },
-      model,
-      reasoningEffort
-    );
-    if (isJson) body.response_format = { type: "json_object" };
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      return {
-        content: "",
-        citations: [],
-        toolTraces: [],
-        mode: "NATIVE_FAILED",
-        error: `native search chat ${res.status}: ${t.slice(0, 280)}`,
-        toolKind,
-        reasoningEffort,
-        ok: false
-      };
-    }
-    const data = await res.json();
-    let content = data.choices?.[0]?.message?.content || "";
-    if (typeof content !== "string") {
-      content = Array.isArray(content)
-        ? content.map((c) => c.text || c.content || "").join("")
-        : JSON.stringify(content);
-    }
-    if (isJson) content = extractJson(content);
-    const citations = extractCitations(data);
-    const reasoning =
-      data.choices?.[0]?.message?.reasoning_content ||
-      data.choices?.[0]?.message?.reasoning ||
-      "";
-    return {
-      content,
-      citations,
-      toolTraces: extractToolTraces(data),
-      mode: "NATIVE_CHAT",
-      toolKind,
-      raw: data,
-      reasoning,
-      reasoningEffort,
-      ok: true
-    };
+    ({ endpoint, apiKey, useProxy } = resolveProviderCredentials());
   } catch (e) {
     return {
       content: "",
@@ -307,29 +191,105 @@ async function attemptNativeOnce({
       mode: "NATIVE_FAILED",
       error: String(e.message || e),
       toolKind,
-      reasoningEffort,
+      ok: false
+    };
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
+    "X-Title": "IHSG Market Bot"
+  };
+
+  let url = buildResponsesUrl(endpoint);
+  if (useProxy) url = getProxyUrl(url);
+
+  const body = buildNativeResponsesBody({ model, system, user, tools });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal
+    });
+
+    if (!res.ok) {
+      const t = await res.text();
+      return {
+        content: "",
+        citations: [],
+        toolTraces: [],
+        mode: "NATIVE_FAILED",
+        error: `responses ${res.status}: ${t.slice(0, 320)}`,
+        toolKind,
+        ok: false,
+        requestUrl: url.replace(/\?.*$/, "")
+      };
+    }
+
+    const data = await res.json();
+    const parsed = parseResponsesApi(data, false);
+    // Success if we have text OR citations from server-side web_search
+    if (parsed.content || (parsed.citations && parsed.citations.length)) {
+      let content = parsed.content || "";
+      return {
+        ...parsed,
+        content,
+        mode: "NATIVE_RESPONSES",
+        toolKind,
+        reasoningEffort: null,
+        ok: true,
+        requestUrl: url.replace(/\?.*$/, "")
+      };
+    }
+
+    return {
+      content: "",
+      citations: parsed.citations || [],
+      toolTraces: parsed.toolTraces || [],
+      mode: "NATIVE_FAILED",
+      error: "responses_empty_output",
+      toolKind,
+      ok: false,
+      raw: data
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return {
+      content: "",
+      citations: [],
+      toolTraces: [],
+      mode: "NATIVE_FAILED",
+      error: String(e.message || e),
+      toolKind,
       ok: false
     };
   }
 }
 
 /**
- * Run with full cascades (default for all models):
- * for each tool profile × reasoning high→med→low→off until content ok.
+ * Native web search: tool cascade only (no reasoning).
+ * Body always docs-minimal via Responses API + custom router credentials.
  */
 export async function chatWithNativeWebSearch({
   model,
   system,
   user,
   signal = null,
-  temperature = 0.3,
+  /** ignored — kept for call-site compat; never sent */
+  temperature: _temperature = undefined,
   isJson = false,
   unrestrictedWeb = false,
-  /** "auto" | "high" | "medium" | "low" | "off" | null | concrete level */
-  reasoningEffort = "auto",
+  /** ignored — reasoning disabled for native web_search */
+  reasoningEffort: _reasoningEffort = "off",
   onLog = null
 }) {
   loadSettings();
+  void _temperature;
+  void _reasoningEffort;
+
   if (!String(model || "").trim()) {
     return {
       content: "",
@@ -342,69 +302,60 @@ export async function chatWithNativeWebSearch({
   }
 
   const toolProfiles = buildToolProfileCascade(model, { unrestrictedWeb });
-  const startEffort = preferredReasoningEffort(model, reasoningEffort);
-  const efforts = reasoningEffortCascade(startEffort || "high");
-
   const attempts = [];
   let last = null;
 
   for (const profile of toolProfiles) {
-    for (const effort of efforts) {
-      onLog?.(
-        `Native try tools=${profile.kind} reason=${effort || "off"}`
-      );
-      const result = await attemptNativeOnce({
-        model,
-        system,
-        user,
-        signal,
-        temperature,
-        isJson,
-        tools: profile.tools,
+    onLog?.(`Native Responses tools=${profile.kind} (no reasoning)`);
+    const result = await attemptNativeOnce({
+      model,
+      system,
+      user,
+      signal,
+      tools: profile.tools,
+      toolKind: profile.kind
+    });
+    last = result;
+    attempts.push({
+      tools: profile.kind,
+      reasoning: "off",
+      ok: !!result.ok,
+      error: result.error || null
+    });
+
+    if (result.ok && (result.content || result.citations?.length)) {
+      let content = result.content || "";
+      if (isJson && content) {
+        try {
+          content = extractJson(content);
+        } catch {
+          /* keep raw */
+        }
+      }
+      return {
+        ...result,
+        content,
+        mode: "NATIVE_RESPONSES",
+        reasoningEffort: null,
+        cascadeAttempts: attempts
+      };
+    }
+
+    const err = result.error || "";
+    if (/401|403|api key|unauthorized/i.test(err)) {
+      return {
+        content: "",
+        citations: [],
+        toolTraces: [],
+        mode: "NATIVE_FAILED",
+        error: err,
         toolKind: profile.kind,
-        reasoningEffort: effort
-      });
-      last = result;
-      attempts.push({
-        tools: profile.kind,
-        reasoning: effort || "off",
-        ok: !!result.ok,
-        error: result.error || null
-      });
-
-      if (result.ok && result.content) {
-        return {
-          ...result,
-          mode: result.mode,
-          cascadeAttempts: attempts
-        };
-      }
-
-      const err = result.error || "";
-      // Reasoning rejected → next lower effort (same tools)
-      if (effort && shouldDropReasoningLevel(err)) {
-        continue;
-      }
-      // Tool/API rejected this profile → skip remaining efforts for this profile, next tools
-      if (shouldTryNextToolProfile(err)) {
-        break;
-      }
-      // Empty content but 200? try next effort then next tools
-      if (!result.content && !err) {
-        continue;
-      }
-      // Auth errors: abort cascade
-      if (/401|403|api key|unauthorized/i.test(err)) {
-        return {
-          content: "",
-          citations: [],
-          toolTraces: [],
-          mode: "NATIVE_FAILED",
-          error: err,
-          toolKind: profile.kind,
-          cascadeAttempts: attempts
-        };
-      }
+        reasoningEffort: null,
+        cascadeAttempts: attempts
+      };
+    }
+    if (shouldTryNextToolProfile(err) || !result.ok) {
+      continue;
     }
   }
 
@@ -415,6 +366,7 @@ export async function chatWithNativeWebSearch({
     mode: "NATIVE_FAILED",
     error: last?.error || "native_cascade_exhausted",
     toolKind: last?.toolKind || null,
+    reasoningEffort: null,
     cascadeAttempts: attempts
   };
 }
@@ -434,11 +386,22 @@ function parseResponsesApi(data, isJson) {
           if (c.text) texts.push(c.text);
         }
       }
+      // Some gateways put assistant text in output[].content string
+      if (item.type === "message" && typeof item.content === "string") {
+        texts.push(item.content);
+      }
     }
     content = texts.join("\n");
   }
   if (!content && data.choices?.[0]?.message?.content) {
     content = data.choices[0].message.content;
+  }
+  if (typeof content !== "string") {
+    content = Array.isArray(content)
+      ? content.map((c) => c.text || c.content || "").join("")
+      : content
+        ? JSON.stringify(content)
+        : "";
   }
   if (isJson && content) content = extractJson(content);
   return {
@@ -455,7 +418,7 @@ function extractCitations(data) {
     for (const c of data.citations) {
       out.push({
         title: c.title || c.url || "",
-        url: c.url || c,
+        url: typeof c === "string" ? c : c.url || "",
         sourceTier: "media"
       });
     }
@@ -508,8 +471,8 @@ function extractToolTraces(data) {
 }
 
 /**
- * Hybrid research cascade (all modes except DEGRADED):
- * 1) Native tools (any model) + reasoning cascade inside chatWithNativeWebSearch
+ * Hybrid research cascade:
+ * 1) Native Responses web_search (custom router, no reasoning)
  * 2) Jina search (+ optional page fetch)
  * 3) Google News RSS
  */
@@ -541,7 +504,6 @@ export async function hybridResearchSearch({
     };
   }
 
-  // 1) Native first for ALL models unless explicit FALLBACK (user wants pack-only)
   const tryNative =
     searchMode !== "FALLBACK" &&
     model &&
@@ -549,10 +511,12 @@ export async function hybridResearchSearch({
     appSettings.preferNativeSearch !== false;
 
   if (tryNative) {
-    onLog?.(`Native web tools first (${model}) · reason cascade high→…→off`);
-    const system = `Financial research agent IDX. Use web search tools when available. Return JSON only:
+    onLog?.(
+      `Native Responses web_search (${model}) · custom router · no reasoning`
+    );
+    const system = `Financial research agent IDX. Use web_search tool. Return JSON only:
 {"findings":[{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":""}]}
-Reason first from context; choose queries dynamically. If tools unavailable, still return best-effort JSON from knowledge but mark sourceTier unknown.`;
+Choose queries from the list; do not invent official filings.`;
     const user = `Search:\n${(queries || []).map((q, i) => `${i + 1}. ${q}`).join("\n")}`;
     const native = await chatWithNativeWebSearch({
       model,
@@ -561,7 +525,6 @@ Reason first from context; choose queries dynamically. If tools unavailable, sti
       signal,
       isJson: true,
       unrestrictedWeb,
-      reasoningEffort: "auto",
       onLog
     });
     nativeMode = native.mode;
@@ -603,9 +566,7 @@ Reason first from context; choose queries dynamically. If tools unavailable, sti
     }
     if (usedNative) {
       layer = "native-tools";
-      onLog?.(
-        `Native OK mode=${nativeMode} reason=${native.reasoningEffort || "off"} hits≈${results.length}`
-      );
+      onLog?.(`Native OK mode=${nativeMode} hits≈${results.length}`);
     } else {
       onLog?.(
         `Native gagal/tipis (${native.mode || "?"} ${native.error || ""}) → Jina + news`,
@@ -616,7 +577,6 @@ Reason first from context; choose queries dynamically. If tools unavailable, sti
     onLog?.("FALLBACK mode — skip native, langsung Jina/news");
   }
 
-  // 2) Jina search (+ fetch) — always enrich unless we have plenty of native hits
   const skipServerPack = usedNative && results.length >= 6 && !fetchPages;
   if (!skipServerPack) {
     try {
@@ -649,73 +609,64 @@ Reason first from context; choose queries dynamically. If tools unavailable, sti
             query: r.query || ""
           });
         }
-        if (data.pages?.length) pages = data.pages;
-        if (serverLayer !== "none") {
-          layer =
-            layer === "none"
-              ? serverLayer
-              : layer.includes(serverLayer)
-                ? layer
-                : `${layer}+${serverLayer}`;
-        }
+        if (Array.isArray(data.pages)) pages = data.pages;
+        if (!usedNative) layer = serverLayer;
+        else if (serverLayer !== "none") layer = `native+${serverLayer}`;
         onLog?.(
-          `Server layer=${serverLayer} hits=${results.length} pages=${pages.length}` +
-            (data.hasJinaKey === false ? " (no JINA key)" : "") +
-            (data.errors?.length ? ` err=${data.errors[0]}` : "")
+          `Server layer=${serverLayer} hits=${(data.results || []).length} pages=${pages.length}${data.error ? ` err=${data.error}` : ""}`
         );
       } else {
-        onLog?.(`Web research HTTP ${res.status}`, "warn");
+        const t = await res.text();
+        onLog?.(`Server research HTTP ${res.status}: ${t.slice(0, 160)}`, "warn");
       }
     } catch (e) {
-      onLog?.(`Web research failed: ${e.message || e}`, "warn");
+      onLog?.(`Server research error: ${e.message}`, "warn");
     }
   }
 
-  // 3) News RSS guarantee
-  if (results.length < 2 && searchMode !== "DEGRADED") {
-    onLog?.("Filling with free news RSS…");
-    for (const q of queries || []) {
-      if (signal?.aborted) break;
-      try {
-        const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=4", {
-          signal
-        });
-        if (!res.ok) continue;
+  // 3) Extra news if still thin
+  if (results.length < 3) {
+    try {
+      const q = (queries || [])[0] || "IHSG";
+      const res = await fetch(
+        `/api/web/news?q=${encodeURIComponent(q)}&max_results=6`,
+        { signal }
+      );
+      if (res.ok) {
         const data = await res.json();
         for (const r of data.results || []) {
-          results.push({ ...r, query: q, provider: r.provider || "google-news-rss" });
+          results.push({
+            title: r.title || "",
+            url: r.url || "",
+            snippet: r.snippet || "",
+            provider: "news-rss",
+            sourceTier: "media"
+          });
         }
-      } catch {
-        /* */
+        if (layer === "none") layer = "news-rss";
       }
-    }
-    if (results.length) {
-      layer =
-        layer === "none" ? "news-rss" : layer.includes("news-rss") ? layer : layer + "+news-rss";
+    } catch {
+      /* */
     }
   }
 
+  // dedupe by url+title
   const seen = new Set();
-  const deduped = results.filter((r) => {
-    const k = (r.url || "") + "|" + (r.title || r.snippet || "").slice(0, 80);
-    if (seen.has(k)) return false;
+  const deduped = [];
+  for (const r of results) {
+    const k = `${r.url || ""}|${r.title || ""}`;
+    if (seen.has(k)) continue;
     seen.add(k);
-    return true;
-  });
-
-  const effective =
-    searchMode === "DEGRADED"
-      ? "DEGRADED"
-      : layer.includes("native") || layer.includes("jina-search")
-        ? "FULL"
-        : "FALLBACK";
+    deduped.push(r);
+  }
 
   return {
     results: deduped,
     pages,
     nativeMode,
     layer,
-    searchModeEffective: effective
+    searchModeEffective: searchMode,
+    usedNative
   };
 }
 

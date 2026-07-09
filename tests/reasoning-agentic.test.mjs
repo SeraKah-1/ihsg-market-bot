@@ -34,6 +34,8 @@ const {
   buildToolProfileCascade,
   buildWebSearchTool,
   stripWebSearchFilters,
+  buildNativeResponsesBody,
+  buildResponsesUrl,
   IDX_SEARCH_DOMAINS
 } = await import(nativeUrl);
 
@@ -100,20 +102,42 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.deepStrictEqual(buildWebSearchTool(), { type: "web_search" });
 }
 
-// Grok preferred tool uses docs filters + max 5 domains
+// Grok preferred = bare web_search (docs basic); filters only optional cascade
 {
   const grok = detectNativeSearchTool("grok-4.5");
   assert.strictEqual(grok.kind, "xai_web_search");
-  const tool = grok.tools[0];
-  assert.strictEqual(tool.type, "web_search");
-  assert.ok(tool.filters?.allowed_domains);
-  assert.strictEqual(tool.allowed_domains, undefined);
-  assert.ok(tool.filters.allowed_domains.length <= 5);
-  assert.deepStrictEqual(tool.filters.allowed_domains, IDX_SEARCH_DOMAINS);
+  assert.deepStrictEqual(grok.tools[0], { type: "web_search" });
 
-  // unrestricted cascade: no filters on first profile
   const deep = buildToolProfileCascade("grok-4.5", { unrestrictedWeb: true });
-  assert.deepStrictEqual(deep[0].tools[0], { type: "web_search" });
+  assert.ok(deep.some((p) => JSON.stringify(p.tools) === JSON.stringify([{ type: "web_search" }])));
+
+  const brief = buildToolProfileCascade("grok-4.5", { unrestrictedWeb: false });
+  const filtered = brief.find((p) => p.kind === "web_search_idx_filter");
+  assert.ok(filtered);
+  assert.deepStrictEqual(filtered.tools[0].filters.allowed_domains, IDX_SEARCH_DOMAINS);
+}
+
+// Docs-minimal Responses body: model + input + tools only (no reasoning/temp)
+{
+  const body = buildNativeResponsesBody({
+    model: "xai/grok-4.5",
+    system: "You are a researcher.",
+    user: "What is IHSG?",
+    tools: [{ type: "web_search" }]
+  });
+  assert.strictEqual(body.model, "xai/grok-4.5");
+  assert.strictEqual(body.input.length, 1);
+  assert.strictEqual(body.input[0].role, "user");
+  assert.ok(body.input[0].content.includes("What is IHSG?"));
+  assert.deepStrictEqual(body.tools, [{ type: "web_search" }]);
+  assert.strictEqual(body.temperature, undefined);
+  assert.strictEqual(body.reasoning, undefined);
+  assert.strictEqual(body.reasoning_effort, undefined);
+  assert.strictEqual(Object.keys(body).sort().join(","), "input,model,tools");
+
+  assert.strictEqual(buildResponsesUrl("https://api.x.ai/v1"), "https://api.x.ai/v1/responses");
+  assert.strictEqual(buildResponsesUrl("https://my.router.com"), "https://my.router.com/v1/responses");
+  assert.strictEqual(buildResponsesUrl("https://my.router.com/v1/"), "https://my.router.com/v1/responses");
 }
 
 // tool cascade has multiple profiles

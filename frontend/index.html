@@ -160,14 +160,14 @@
             <label class="field">
               <span class="field-label">Search mode</span>
               <select id="search-mode">
-                <option value="auto">Auto — native + reasoning (semua model), cascade fallback</option>
-                <option value="FULL">FULL — native tools + reason cascade → Jina → news</option>
+                <option value="auto">Auto — Responses web_search (custom router) → Jina → news</option>
+                <option value="FULL">FULL — native Responses web_search → Jina → news</option>
                 <option value="FALLBACK">FALLBACK — Jina + Google News (skip native)</option>
                 <option value="DEGRADED">DEGRADED — no search</option>
               </select>
             </label>
             <p class="fineprint" style="text-align:left;margin:0.35rem 0 0">
-              Default: coba native web tools + reasoning <b>high→medium→low→off</b> untuk model apa pun; gagal → Jina search → news RSS.
+              Native = <b>POST /v1/responses</b> body minimal (<code>model</code> + <code>input</code> + <code>tools: web_search</code>), API key &amp; base URL dari Settings (custom router). <b>Tanpa reasoning / temperature</b>. Gagal → Jina → news RSS.
             </p>
             <label class="check">
               <input id="force-refresh" type="checkbox" />
@@ -180,7 +180,7 @@
           <summary class="acc-sum"><span>Deep dive</span><span class="acc-hint">1 emiten</span></summary>
           <div class="acc-body">
             <p class="fineprint" style="text-align:left;margin:0 0 0.5rem">
-              Agentic deep dive: model reasoning + native web tools memilih query sendiri (bukan daftar kaku). Set Research/Judge ke Grok/Gemini reasoning. Tanpa Jina page-fetch.
+              Agentic deep dive: multi-round native <code>web_search</code> (Responses API, custom router, no reasoning). Fallback Jina/news jika native gagal.
             </p>
             <label class="field">
               <span class="field-label">Kode emiten</span>
