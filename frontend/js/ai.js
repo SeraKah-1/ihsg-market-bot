@@ -1,9 +1,21 @@
 /**
  * Slim custom-router client (OpenAI-compatible). Personal use.
+ * Reasoning cascade + non-zero temperature defaults.
  */
 import { appSettings, loadSettings } from "./state.js";
+import {
+  injectReasoningParams,
+  preferredReasoningEffort,
+  reasoningEffortCascade,
+  shouldDropReasoningLevel
+} from "./search/reasoning.js";
 
 loadSettings();
+
+/** Default creative temp for analysis agents — never freeze at 0 */
+export const DEFAULT_TEMP = 0.65;
+/** Slightly lower for repair-only JSON fix (still not 0) */
+export const REPAIR_TEMP = 0.2;
 
 function normalizeEndpoint(endpoint) {
   if (!endpoint) return "";
@@ -39,14 +51,15 @@ export function extractJson(text) {
 }
 
 /**
- * Non-stream chat completion. isJson → response_format json_object.
+ * Single chat/completions attempt (optional reasoning fields already on body).
  */
-export async function chatComplete({
+async function chatCompleteOnce({
   model,
   messages,
   isJson = false,
   signal = null,
-  temperature = 0.4
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = null
 }) {
   const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
   let targetUrl = `${endpoint}/chat/completions`;
@@ -55,10 +68,11 @@ export async function chatComplete({
   const body = {
     model,
     messages,
-    temperature,
+    temperature: temperature == null ? DEFAULT_TEMP : temperature,
     stream: false
   };
   if (isJson) body.response_format = { type: "json_object" };
+  if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
 
   const res = await fetch(targetUrl, {
     method: "POST",
@@ -83,11 +97,69 @@ export async function chatComplete({
   return {
     content,
     raw: data,
-    reasoning: data.choices?.[0]?.message?.reasoning_content || data.choices?.[0]?.message?.reasoning || ""
+    reasoning:
+      data.choices?.[0]?.message?.reasoning_content ||
+      data.choices?.[0]?.message?.reasoning ||
+      "",
+    reasoningEffort: reasoningEffort || null
   };
 }
 
-export async function chatJson({ model, system, user, signal, temperature = 0.35 }) {
+/**
+ * Non-stream chat completion with reasoning cascade high→med→low→off.
+ */
+export async function chatComplete({
+  model,
+  messages,
+  isJson = false,
+  signal = null,
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = "auto",
+  onLog = null
+}) {
+  const preferred = preferredReasoningEffort(model, reasoningEffort);
+  const efforts = reasoningEffortCascade(preferred ?? "high");
+  let lastErr = null;
+
+  for (const effort of efforts) {
+    try {
+      onLog?.(
+        `chatComplete model=${model} temp=${temperature} reason=${effort || "off"}`
+      );
+      return await chatCompleteOnce({
+        model,
+        messages,
+        isJson,
+        signal,
+        temperature,
+        reasoningEffort: effort
+      });
+    } catch (e) {
+      lastErr = e;
+      if (signal?.aborted) throw e;
+      if (shouldDropReasoningLevel(e) && effort) {
+        onLog?.(`reason=${effort} ditolak → turun cascade: ${String(e.message || e).slice(0, 120)}`);
+        continue;
+      }
+      // non-reasoning error — don't spin the whole cascade unless 400-ish
+      if (effort && /400|422|unknown|unrecognized|parameter/i.test(String(e.message || e))) {
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error("chatComplete cascade exhausted");
+}
+
+export async function chatJson({
+  model,
+  system,
+  user,
+  signal,
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = "auto",
+  onLog = null
+}) {
   const messages = [
     {
       role: "system",
@@ -97,11 +169,21 @@ export async function chatJson({ model, system, user, signal, temperature = 0.35
     },
     { role: "user", content: user }
   ];
-  const { content } = await chatComplete({ model, messages, isJson: true, signal, temperature });
+  const { content, reasoningEffort: used } = await chatComplete({
+    model,
+    messages,
+    isJson: true,
+    signal,
+    temperature,
+    reasoningEffort,
+    onLog
+  });
   try {
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    parsed.__meta = { ...(parsed.__meta || {}), reasoningEffort: used };
+    return parsed;
   } catch (e) {
-    // one repair attempt
+    // one repair attempt — low but non-zero temp
     const repair = await chatComplete({
       model,
       messages: [
@@ -110,7 +192,9 @@ export async function chatJson({ model, system, user, signal, temperature = 0.35
       ],
       isJson: true,
       signal,
-      temperature: 0
+      temperature: REPAIR_TEMP,
+      reasoningEffort: "off",
+      onLog
     });
     return JSON.parse(repair.content);
   }
@@ -119,12 +203,19 @@ export async function chatJson({ model, system, user, signal, temperature = 0.35
 export function modelFor(role) {
   loadSettings();
   const m = appSettings.models || {};
-  return m[role] || m.judge || "gpt-4o-mini";
+  // new roles + legacy aliases
+  if (role === "analysis") return m.analysis || m.judge || m.research || "gpt-4o-mini";
+  if (role === "verify") return m.verify || m.judge || m.analysis || m.research || "gpt-4o-mini";
+  if (role === "research" || role === "researcher") {
+    return m.research || m.researcher || "gpt-4o-mini";
+  }
+  if (role === "judge") return m.analysis || m.judge || "gpt-4o-mini";
+  if (role === "fear" || role === "positive") return m.analysis || m[role] || "gpt-4o-mini";
+  return m[role] || m.analysis || m.judge || "gpt-4o-mini";
 }
 
 /**
  * GET {endpoint}/models — OpenAI-compatible list.
- * Returns sorted model ids (deduped).
  */
 export async function fetchModels(signal = null) {
   loadSettings();

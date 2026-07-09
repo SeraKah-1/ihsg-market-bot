@@ -117,7 +117,7 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.deepStrictEqual(filtered.tools[0].filters.allowed_domains, IDX_SEARCH_DOMAINS);
 }
 
-// Docs-minimal Responses body: model + input + tools + stream:false (no reasoning/temp)
+// Responses body: model + input + tools + stream:false + temperature; reasoning optional
 {
   const body = buildNativeResponsesBody({
     model: "xai/grok-4.5",
@@ -131,10 +131,19 @@ assert.strictEqual(detectNativeSearchTool("my-custom-model").tools[0].type, "web
   assert.ok(body.input[0].content.includes("What is IHSG?"));
   assert.deepStrictEqual(body.tools, [{ type: "web_search" }]);
   assert.strictEqual(body.stream, false);
-  assert.strictEqual(body.temperature, undefined);
+  assert.ok(typeof body.temperature === "number" && body.temperature > 0);
   assert.strictEqual(body.reasoning, undefined);
   assert.strictEqual(body.reasoning_effort, undefined);
-  assert.strictEqual(Object.keys(body).sort().join(","), "input,model,stream,tools");
+
+  const withReason = buildNativeResponsesBody({
+    model: "xai/grok-4.5",
+    system: "s",
+    user: "u",
+    tools: [{ type: "web_search" }],
+    reasoningEffort: "high"
+  });
+  assert.strictEqual(withReason.reasoning_effort, "high");
+  assert.ok(withReason.reasoning?.effort === "high");
 
   assert.strictEqual(buildResponsesUrl("https://api.x.ai/v1"), "https://api.x.ai/v1/responses");
   assert.strictEqual(buildResponsesUrl("https://my.router.com"), "https://my.router.com/v1/responses");

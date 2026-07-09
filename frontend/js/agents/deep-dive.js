@@ -3,7 +3,7 @@
  * Agentic native web tools + reasoning (model milih query sendiri).
  * Fallback: news/Jina search pack + chatJson tanpa tools (no page fetch).
  */
-import { chatJson, modelFor, extractJson } from "../ai.js";
+import { chatJson, modelFor, extractJson, DEFAULT_TEMP } from "../ai.js";
 import { GLOBAL_RULES } from "./constitution.js";
 import { modelSupportsNativeSearch } from "../search/native-search.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
@@ -15,14 +15,14 @@ export function deepDiveSystem() {
     GLOBAL_RULES +
     `
 
-ROLE: Deep-dive analyst emiten IDX (needle-in-haystack) — output DIBACA MANUSIA.
-1) Baca metrics/context hard dulu (fakta code).
-2) Dynamic search: query sendiri — bisnis, lapkeu, proyek, aksi korp, denda, right issue, makro sektor.
-3) Wajib coba: ringkas lapkeu + proyeksi cerah|biasa|suram (funda) + tape harga cerah|biasa|suram + gabungan.
-4) Field plain: whatHappened / whyItMatters / whatToDo (bukan rantai singkatan).
-5) Bedakan official / media / rumor. JANGAN mengarang angka lapkeu.
-6) Forecast + invalidation + exit-liq.
-7) Bahasa ID lurus.
+ROLE: Deep-dive emiten IDX — chat trader waras, bukan laporan formal.
+1) Baca hard metrics dulu.
+2) Web hunt dinamis: bisnis, lapkeu, proyek, aksi korp, denda, right issue, makro sektor.
+3) Outlook tape + funda (cerah|biasa|suram) + gabungan — boleh beda.
+4) plain: apa / kenapa / lakukan — punchy, boleh tajam.
+5) Official / media / rumor. Jangan mengarang angka lapkeu.
+6) Forecast + invalidation + exit-liq yang bisa dicek.
+7) 1 insight "wow" per bagian penting, bukan dump indikator.
 
 Output JSON ketat sesuai schema.`
   );
@@ -269,7 +269,7 @@ export async function runDeepDiveAgent({
   // Research model default (any model — native+reasoning tried with cascade)
   let model = researchModel();
   try {
-    if (!String(model || "").trim()) model = modelFor("judge");
+    if (!String(model || "").trim()) model = modelFor("research") || modelFor("analysis");
   } catch {
     /* */
   }
@@ -299,7 +299,8 @@ export async function runDeepDiveAgent({
       onLog,
       maxRounds: 3,
       unrestrictedWeb: true,
-
+      temperature: DEFAULT_TEMP,
+      reasoningEffort: "auto",
       finalSchemaHint: "Schema deep_dive (JSON):\n" + schema
     });
 
@@ -418,15 +419,17 @@ export async function runDeepDiveAgent({
           : "Pakai searchResults. Query generik hanya seed — prioritaskan klaim yang relevan data hard."
     };
     const out = await chatJson({
-      model: modelFor("judge") || model,
+      model: modelFor("analysis") || model,
       system,
       user:
         JSON.stringify(payload, null, 2) +
         "\n\nTugas: deep dive " +
         ticker +
-        ". Cari needle dari searchResults. Jangan kosongkan section tanpa unexplained.",
+        ". Cari needle dari searchResults. Bahasa chat, tajam, bukan formal. Jangan kosongkan section tanpa unexplained.",
       signal,
-      temperature: 0.35
+      temperature: DEFAULT_TEMP,
+      reasoningEffort: "auto",
+      onLog
     });
     return finalizeReport(out, {
       ticker,

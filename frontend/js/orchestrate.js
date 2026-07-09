@@ -1,9 +1,8 @@
 import { appSettings, loadSettings, logLine, setStatus } from "./state.js";
 import { detectSearchMode, searchModeBanner } from "./search/capability.js";
-import { runResearch } from "./agents/research.js";
-import { runFear } from "./agents/fear.js";
-import { runPositive } from "./agents/positive.js";
-import { runJudge } from "./agents/judge.js";
+import { runResearcher } from "./agents/researcher.js";
+import { runAnalysis } from "./agents/analysis.js";
+import { runVerify } from "./agents/verify.js";
 import {
   renderBriefingHtml,
   renderDeepDiveHtml,
@@ -12,7 +11,6 @@ import {
   injectReportStylesOnce
 } from "./render-report.js";
 import { runDeepDiveAgent } from "./agents/deep-dive.js";
-import { hybridResearchSearch, researchModel } from "./search/native-search.js";
 
 let abortCtrl = null;
 
@@ -20,6 +18,10 @@ export function abortRun() {
   if (abortCtrl) abortCtrl.abort();
 }
 
+/**
+ * Pipeline v2: Researcher (web) → Analysis → Verify (optional web).
+ * No Fear/Positive/Judge split.
+ */
 export async function runPipeline({ skipAi = false } = {}) {
   loadSettings();
   if (abortCtrl) abortCtrl.abort();
@@ -37,27 +39,27 @@ export async function runPipeline({ skipAi = false } = {}) {
 
     const q = new URLSearchParams({ k: String(k) });
     if (force) q.set("force", "1");
-    // shortlist endpoint does ohlcv+rank
-    // for max limit use ohlcv first
     let shortlistPack;
     if (max) {
       logLine(`Ingest max=${max} tickers…`);
-      const ohlcvRes = await fetch("/api/market/ohlcv?" + new URLSearchParams({ force: force ? "1" : "0", max: String(max) }), {
-        signal
-      });
+      const ohlcvRes = await fetch(
+        "/api/market/ohlcv?" +
+          new URLSearchParams({ force: force ? "1" : "0", max: String(max) }),
+        { signal }
+      );
       if (!ohlcvRes.ok) throw new Error(await ohlcvRes.text());
       const ohlcv = await ohlcvRes.json();
       logLine(
         `OHLCV day=${ohlcv.day} coverage=${ohlcv.coveragePct}% ok=${ohlcv.fetchedOk}/${ohlcv.universeSize} cache=${ohlcv.fromCache} ${ohlcv.elapsedMs || 0}ms`
       );
       const slRes = await fetch("/api/market/shortlist?" + q.toString(), { signal });
-      // rebuild client-side if needed — call shortlist API without force (uses cache)
       if (!slRes.ok) throw new Error(await slRes.text());
       shortlistPack = await slRes.json();
     } else {
-      const slRes = await fetch("/api/market/shortlist?" + q.toString() + (force ? "&force=1" : ""), {
-        signal
-      });
+      const slRes = await fetch(
+        "/api/market/shortlist?" + q.toString() + (force ? "&force=1" : ""),
+        { signal }
+      );
       if (!slRes.ok) throw new Error(await slRes.text());
       shortlistPack = await slRes.json();
       logLine(
@@ -72,65 +74,31 @@ export async function runPipeline({ skipAi = false } = {}) {
       return { shortlistPack, briefing: null };
     }
 
-    // memory
     const memRes = await fetch("/api/memory/compact?n=10", { signal });
     const memJson = memRes.ok ? await memRes.json() : { items: [] };
     const memory = memJson.items || [];
 
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
-    setStatus(`Research ${searchMode}…`, "busy");
 
-    let searchResults = [];
-    let searchModeEffective = searchMode;
-    if (searchMode !== "DEGRADED") {
-      const queries = [
-        `IHSG ${shortlistPack.day} penopang pemberat`,
-        ...(shortlistPack.shortlist || [])
-          .slice(0, 6)
-          .flatMap((s) => [
-            `${s.ticker} saham IDX berita`,
-            `${s.ticker} aksi korporasi OR right issue OR buyback`
-          ])
-      ];
-      const hybrid = await hybridResearchSearch({
-        model: researchModel(),
-        queries,
-        searchMode,
-        signal,
-        onLog: logLine,
-        unrestrictedWeb: false,
-        fetchPages: false,
-        fetchLimit: 0
-      });
-      searchResults = hybrid.results;
-      searchModeEffective = hybrid.searchModeEffective || searchMode;
-      logLine(
-        `Search hits: ${searchResults.length} layer=${hybrid.layer || "—"} effective=${searchModeEffective}`
-      );
-    }
-
-    const research = await runResearch({
+    // 1) Researcher — owns search plan + web
+    setStatus("Researcher (web)…", "busy");
+    const research = await runResearcher({
       shortlistPack,
-      searchMode: searchModeEffective,
-      searchResults,
+      searchMode,
       memory,
       signal,
       onLog: logLine
     });
+    logLine(
+      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length}`
+    );
 
-    setStatus("Fear ‖ Positive…", "busy");
-    const [fear, positive] = await Promise.all([
-      runFear({ shortlistPack, research, signal, onLog: logLine }),
-      runPositive({ shortlistPack, research, signal, onLog: logLine })
-    ]);
-
-    setStatus("Judge…", "busy");
-    const briefing = await runJudge({
+    // 2) Analysis — full briefing
+    setStatus("Analysis…", "busy");
+    let briefing = await runAnalysis({
       shortlistPack,
       research,
-      fear,
-      positive,
       memory,
       searchMode,
       runId,
@@ -138,7 +106,24 @@ export async function runPipeline({ skipAi = false } = {}) {
       onLog: logLine
     });
 
-    // persist
+    // 3) Verify — skeptic + optional clarify search
+    setStatus("Verify…", "busy");
+    briefing = await runVerify({
+      shortlistPack,
+      research,
+      briefing,
+      searchMode,
+      runId,
+      signal,
+      onLog: logLine
+    });
+    briefing.researchPack = {
+      hotTakes: research.hotTakes,
+      macroNote: research.macroNote,
+      searchPlan: research.searchPlan,
+      agentMeta: research.agentMeta
+    };
+
     await fetch("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -162,13 +147,18 @@ export async function runPipeline({ skipAi = false } = {}) {
     if (reportEl) reportEl.innerHTML = html;
     window.__lastBriefing = briefing;
     window.__lastShortlist = shortlistPack;
+    window.__lastResearch = research;
 
-    // mermaid / katex
     await postRender();
 
     setStatus("Selesai — " + (briefing.sentiment?.judgeLean || "?"), "ok");
-    logLine("Done. judgeLean=" + briefing.sentiment?.judgeLean);
-    return { shortlistPack, briefing };
+    logLine(
+      "Done. lean=" +
+        briefing.sentiment?.judgeLean +
+        " verify=" +
+        (briefing.verify?.note || "").slice(0, 80)
+    );
+    return { shortlistPack, briefing, research };
   } catch (e) {
     if (e.name === "AbortError") {
       setStatus("Dibatalkan", "warn");
@@ -182,26 +172,117 @@ export async function runPipeline({ skipAi = false } = {}) {
   }
 }
 
-async function collectSearch(shortlistPack, signal) {
-  const queries = [
-    `IHSG ${shortlistPack.day} penopang pemberat`,
-    ...(shortlistPack.shortlist || []).slice(0, 6).map((s) => `${s.ticker} saham IDX berita`)
-  ];
-  const out = [];
-  for (const q of queries) {
-    if (signal.aborted) break;
-    try {
-      const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=4", { signal });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const r of data.results || []) {
-        out.push({ ...r, query: q });
-      }
-    } catch {
-      /* ignore single fail */
-    }
+export async function runDeepDive(tickerRaw) {
+  loadSettings();
+  if (abortCtrl) abortCtrl.abort();
+  abortCtrl = new AbortController();
+  const signal = abortCtrl.signal;
+  const ticker = String(tickerRaw || "")
+    .toUpperCase()
+    .replace(/\.JK$/i, "")
+    .trim();
+  if (!/^[A-Z]{3,4}$/.test(ticker)) {
+    setStatus("Ticker invalid (3–4 huruf)", "err");
+    logLine("Deep dive: ticker invalid " + tickerRaw, "err");
+    return null;
   }
-  return out;
+
+  const runId = `deep_${ticker}_${Date.now()}`;
+  try {
+    setStatus(`Deep dive ${ticker}: data…`, "busy");
+    logLine(`Deep dive start ${ticker}`);
+
+    const packRes = await fetch(`/api/market/ticker/${ticker}`, { signal });
+    if (!packRes.ok) throw new Error(await packRes.text());
+    const marketPack = await packRes.json();
+    logLine(
+      `Data ${ticker}: ${marketPack.stock?.context?.summary || "ok"} · regime ${marketPack.marketRegime?.tag || "?"}`
+    );
+
+    if (marketPack.ihsg) {
+      updateKpisFromShortlist({
+        ihsg: marketPack.ihsg,
+        breadth: { adv: "—", dec: "—", total: null },
+        dataQuality: { coveragePct: 100, fromCache: marketPack.fromCache }
+      });
+    }
+
+    const searchMode = detectSearchMode();
+    logLine(searchModeBanner(searchMode));
+    if (searchMode === "FULL") {
+      logLine("Deep dive FULL — agentic native + reasoning");
+    } else if (searchMode === "DEGRADED") {
+      logLine("DEGRADED — deep dive tanpa search live", "warn");
+    } else {
+      logLine("Deep dive FALLBACK — pack search seed");
+    }
+
+    const memRes = await fetch("/api/memory/compact?n=8", { signal });
+    const memJson = memRes.ok ? await memRes.json() : { items: [] };
+
+    setStatus(`Deep dive ${ticker}: agentic AI…`, "busy");
+    const report = await runDeepDiveAgent({
+      ticker,
+      marketPack,
+      searchResults: [],
+      pageContents: [],
+      searchMode,
+      memory: memJson.items || [],
+      runId,
+      signal,
+      onLog: logLine
+    });
+
+    await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(report)
+    });
+
+    injectReportStylesOnce();
+    const html = renderDeepDiveHtml(report);
+    const reportEl = document.getElementById("report-view");
+    if (reportEl) reportEl.innerHTML = html;
+    window.__lastBriefing = report;
+
+    const sl = document.getElementById("shortlist-table");
+    if (sl && marketPack.stock) {
+      const s = marketPack.stock;
+      sl.innerHTML = `
+        <div class="meta-strip">
+          <span>Deep dive <b>${esc(ticker)}</b></span>
+          <span>Regime <b>${esc(marketPack.marketRegime?.tag || "—")}</b></span>
+          <span>${esc(marketPack.marketRegime?.ihsgSummary || "")}</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Ticker</th><th>1d%</th><th>RVOL</th><th>Context</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="ticker">${esc(ticker)}</span></td>
+                <td class="${(s.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.changePct)}%</td>
+                <td>${fmt(s.rvol)}</td>
+                <td class="ctx-cell">${esc(s.context?.summary || "—")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    setStatus(`Deep dive ${ticker} selesai · ${report.forecast?.lean || "?"}`, "ok");
+    logLine(`Deep dive done ${ticker} lean=${report.forecast?.lean}`);
+    return report;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      setStatus("Dibatalkan", "warn");
+      logLine("Deep dive aborted", "warn");
+      return null;
+    }
+    console.error(e);
+    setStatus("Deep dive error: " + e.message, "err");
+    logLine(String(e.message || e), "err");
+    throw e;
+  }
 }
 
 function renderShortlistTable(pack) {
@@ -357,123 +438,4 @@ export function downloadHtml() {
       : `briefing-${b.asOfSession || "run"}.html`;
   a.download = name;
   a.click();
-}
-
-/**
- * Deep dive one emiten: intensive search + single structured analysis.
- */
-export async function runDeepDive(tickerRaw) {
-  loadSettings();
-  if (abortCtrl) abortCtrl.abort();
-  abortCtrl = new AbortController();
-  const signal = abortCtrl.signal;
-  const ticker = String(tickerRaw || "")
-    .toUpperCase()
-    .replace(/\.JK$/i, "")
-    .trim();
-  if (!/^[A-Z]{3,4}$/.test(ticker)) {
-    setStatus("Ticker invalid (3–4 huruf)", "err");
-    logLine("Deep dive: ticker invalid " + tickerRaw, "err");
-    return null;
-  }
-
-  const runId = `deep_${ticker}_${Date.now()}`;
-  try {
-    setStatus(`Deep dive ${ticker}: data…`, "busy");
-    logLine(`Deep dive start ${ticker}`);
-
-    const packRes = await fetch(`/api/market/ticker/${ticker}`, { signal });
-    if (!packRes.ok) throw new Error(await packRes.text());
-    const marketPack = await packRes.json();
-    logLine(
-      `Data ${ticker}: ${marketPack.stock?.context?.summary || "ok"} · regime ${marketPack.marketRegime?.tag || "?"}`
-    );
-
-    // update KPI lightly from pack
-    if (marketPack.ihsg) {
-      updateKpisFromShortlist({
-        ihsg: marketPack.ihsg,
-        breadth: { adv: "—", dec: "—", total: null },
-        dataQuality: { coveragePct: 100, fromCache: marketPack.fromCache }
-      });
-    }
-
-    // Option C: agent owns web tools (dynamic queries + reasoning). No pre-fetch Jina.
-    const searchMode = detectSearchMode();
-    logLine(searchModeBanner(searchMode));
-    if (searchMode === "DEGRADED") {
-      logLine("DEGRADED — deep dive tanpa search live", "warn");
-    } else if (searchMode === "FULL") {
-      logLine("Deep dive FULL — agentic native tools (model pilih query sendiri)");
-    } else {
-      logLine("Deep dive FALLBACK — pack search seed, tanpa page fetch");
-    }
-
-    const memRes = await fetch("/api/memory/compact?n=8", { signal });
-    const memJson = memRes.ok ? await memRes.json() : { items: [] };
-
-    setStatus(`Deep dive ${ticker}: agentic AI…`, "busy");
-    const report = await runDeepDiveAgent({
-      ticker,
-      marketPack,
-      searchResults: [],
-      pageContents: [],
-      searchMode,
-      memory: memJson.items || [],
-      runId,
-      signal,
-      onLog: logLine
-    });
-
-    await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(report)
-    });
-
-    injectReportStylesOnce();
-    const html = renderDeepDiveHtml(report);
-    const reportEl = document.getElementById("report-view");
-    if (reportEl) reportEl.innerHTML = html;
-    window.__lastBriefing = report;
-
-    // shortlist panel shows ticker snapshot
-    const sl = document.getElementById("shortlist-table");
-    if (sl && marketPack.stock) {
-      const s = marketPack.stock;
-      sl.innerHTML = `
-        <div class="meta-strip">
-          <span>Deep dive <b>${esc(ticker)}</b></span>
-          <span>Regime <b>${esc(marketPack.marketRegime?.tag || "—")}</b></span>
-          <span>${esc(marketPack.marketRegime?.ihsgSummary || "")}</span>
-        </div>
-        <div class="table-wrap">
-          <table class="data">
-            <thead><tr><th>Ticker</th><th>1d%</th><th>RVOL</th><th>Context</th></tr></thead>
-            <tbody>
-              <tr>
-                <td><span class="ticker">${esc(ticker)}</span></td>
-                <td class="${(s.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.changePct)}%</td>
-                <td>${fmt(s.rvol)}</td>
-                <td class="ctx-cell">${esc(s.context?.summary || "—")}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>`;
-    }
-
-    setStatus(`Deep dive ${ticker} selesai · ${report.forecast?.lean || "?"}`, "ok");
-    logLine(`Deep dive done ${ticker} lean=${report.forecast?.lean}`);
-    return report;
-  } catch (e) {
-    if (e.name === "AbortError") {
-      setStatus("Dibatalkan", "warn");
-      logLine("Deep dive aborted", "warn");
-      return null;
-    }
-    console.error(e);
-    setStatus("Deep dive error: " + e.message, "err");
-    logLine(String(e.message || e), "err");
-    throw e;
-  }
 }

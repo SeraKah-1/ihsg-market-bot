@@ -7,6 +7,9 @@ export const DEFAULT_SETTINGS = {
   useCorsProxy: true,
   models: {
     research: "gpt-4o-mini",
+    analysis: "gpt-4o-mini",
+    verify: "gpt-4o-mini",
+    // legacy keys still merged if present in localStorage
     fear: "gpt-4o-mini",
     positive: "gpt-4o-mini",
     judge: "gpt-4o-mini"
@@ -49,6 +52,15 @@ export function saveSettings(partial = {}) {
 function mergeSettings(base, partial) {
   const out = { ...base, ...partial };
   if (partial.models) out.models = { ...base.models, ...partial.models };
+  // migrate old Fear/Positive/Judge → analysis/verify once
+  if (out.models) {
+    if (!out.models.analysis && (out.models.judge || out.models.fear)) {
+      out.models.analysis = out.models.judge || out.models.fear;
+    }
+    if (!out.models.verify && (out.models.judge || out.models.positive)) {
+      out.models.verify = out.models.judge || out.models.positive;
+    }
+  }
   return out;
 }
 

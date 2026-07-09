@@ -24,7 +24,7 @@ function applyTheme(mode) {
 /** In-memory model catalog for filter + selects */
 let modelCatalog = [];
 
-const MODEL_SELECT_IDS = ["model-research", "model-fear", "model-positive", "model-judge"];
+const MODEL_SELECT_IDS = ["model-research", "model-analysis", "model-verify"];
 
 /**
  * Populate role <select>s via DOM APIs (safe for ids with /, :, etc.).
@@ -90,9 +90,8 @@ function bindSettingsForm() {
   // seed selects with saved values even before fetch
   const saved = [
     s.models?.research,
-    s.models?.fear,
-    s.models?.positive,
-    s.models?.judge
+    s.models?.analysis || s.models?.judge,
+    s.models?.verify || s.models?.judge
   ].filter(Boolean);
   const uniqueSaved = [...new Set(saved)];
   if (uniqueSaved.length && !modelCatalog.length) {
@@ -130,9 +129,8 @@ function readSettingsFromForm() {
     searchModeOverride: $("search-mode")?.value || "auto",
     models: {
       research: $("model-research")?.value?.trim() || "gpt-4o-mini",
-      fear: $("model-fear")?.value?.trim() || "gpt-4o-mini",
-      positive: $("model-positive")?.value?.trim() || "gpt-4o-mini",
-      judge: $("model-judge")?.value?.trim() || "gpt-4o-mini"
+      analysis: $("model-analysis")?.value?.trim() || "gpt-4o-mini",
+      verify: $("model-verify")?.value?.trim() || "gpt-4o-mini"
     }
   });
   logLine("Settings saved");

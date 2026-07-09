@@ -1,9 +1,8 @@
 /**
  * Agentic native web research — multi-round Responses API web_search.
- * Each round: docs-minimal body (model + input + tools), custom router, NO reasoning.
- * Outer fallback (Jina/news) handled by caller if this returns NATIVE_FAILED.
+ * Reasoning cascade + temperature per round.
  */
-import { extractJson } from "../ai.js";
+import { extractJson, DEFAULT_TEMP } from "../ai.js";
 import { chatWithNativeWebSearch, modelSupportsNativeSearch, detectNativeSearchTool } from "./native-search.js";
 
 /**
@@ -26,13 +25,11 @@ export async function runAgenticNativeLoop({
   onLog = null,
   maxRounds = 3,
   unrestrictedWeb = true,
-  temperature: _temperature = undefined,
-  reasoningEffort: _reasoningEffort = "off",
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = "auto",
   intermediateHint = null,
   finalSchemaHint = null
 }) {
-  void _temperature;
-  void _reasoningEffort;
   if (!modelSupportsNativeSearch(model)) {
     return {
       content: "",
@@ -53,21 +50,21 @@ export async function runAgenticNativeLoop({
   let lastContent = "";
   let lastMode = "NATIVE_FAILED";
   let usedEffort = null;
+  const temp = temperature == null ? DEFAULT_TEMP : temperature;
 
   const gatherSystem =
     system +
     `
 
-AGENTIC WEB (wajib coba):
-- Pakai web search tools bila gateway support. Kalau tool ditolak, tetap reason + jawab sejujurnya.
-- REASON dulu dari data hard: anomali harga/volume/struktur/vs IHSG?
-- TENTUKAN query sendiri (dinamis). Ikuti needle: aksi korporasi, right issue, buyback, denda, litigasi, proyek, free float.
-- Bedakan official / media / rumor. Jangan mengarang angka lapkeu.`;
+AGENTIC WEB:
+- Pakai web_search. Reason dulu dari data hard → tentukan query sendiri.
+- Dinamis: aksi korporasi, right issue, buyback, denda, proyek, free float, lapkeu.
+- Official / media / rumor. Jangan mengarang angka.`;
 
   for (let round = 1; round <= maxRounds; round++) {
     const isFinal = round === maxRounds;
     onLog?.(
-      `Agentic r${round}/${maxRounds} · preferTools=${toolHint} · Responses no-reasoning`
+      `Agentic r${round}/${maxRounds} · tools≈${toolHint} · reason=cascade · temp=${temp}`
     );
 
     let roundUser;
@@ -113,10 +110,12 @@ Jika sudah cukup, status=done.`);
       signal,
       isJson: true,
       unrestrictedWeb,
+      temperature: temp,
+      reasoningEffort,
       onLog
     });
 
-    usedEffort = null;
+    usedEffort = result.reasoningEffort || null;
 
     if (result.mode === "NATIVE_FAILED" || !result.content) {
       searchLog.push({
@@ -174,9 +173,9 @@ Jika sudah cukup, status=done.`);
     transcript += `\n--- round ${round} ---\n${piece.slice(0, 8000)}\n`;
 
     onLog?.(
-      `Agentic r${round} ok mode=${result.mode} tools=${result.toolKind || "?"} findings=${
-        parsed?.findings?.length ?? "—"
-      }`
+      `Agentic r${round} ok mode=${result.mode} tools=${result.toolKind || "?"} reason=${
+        result.reasoningEffort || "off"
+      } findings=${parsed?.findings?.length ?? "—"}`
     );
 
     if (!isFinal && parsed?.status === "done" && (parsed.findings || []).length >= 3) {
@@ -194,6 +193,8 @@ Jika sudah cukup, status=done.`);
         signal,
         isJson: true,
         unrestrictedWeb,
+        temperature: temp,
+        reasoningEffort,
         onLog
       });
       if (finalRes.mode !== "NATIVE_FAILED" && finalRes.content) {
@@ -201,13 +202,13 @@ Jika sudah cukup, status=done.`);
         for (const t of finalRes.toolTraces || []) allTraces.push(t);
         lastContent = finalRes.content;
         lastMode = finalRes.mode + "+early_final";
-        usedEffort = null;
+        usedEffort = finalRes.reasoningEffort || usedEffort;
         searchLog.push({
           round: round + 0.5,
           ok: true,
           mode: finalRes.mode,
           final: true,
-          reasoningEffort: null
+          reasoningEffort: finalRes.reasoningEffort
         });
       }
       break;

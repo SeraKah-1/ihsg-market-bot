@@ -148,19 +148,28 @@ export function renderBriefingHtml(b) {
   </details>
 
   <details class="rpt-section" open>
-    <summary>Suara Fear vs Positive (ringkas)</summary>
+    <summary>Analysis · Verify</summary>
     <div class="rpt-body">
+      <div class="rpt-panel" style="margin-bottom:.75rem">
+        <h4>Analysis punch</h4>
+        <p>${esc(b.sentiment?.analysisSummary || b.sentiment?.judgeRationale || "—")}</p>
+      </div>
       <div class="rpt-grid-2">
         <div class="rpt-panel">
-          <h4>Fear · jebakan exit-liq</h4>
-          <p>${esc(b.sentiment?.fear?.summary || "—")}</p>
+          <h4>Jebakan / trap</h4>
+          <p>${esc(b.sentiment?.trapWatch || b.sentiment?.fear?.summary || "—")}</p>
         </div>
         <div class="rpt-panel">
-          <h4>Positive · flow / FOMO fuel</h4>
-          <p>${esc(b.sentiment?.positive?.summary || "—")}</p>
+          <h4>Flow / uang hidup</h4>
+          <p>${esc(b.sentiment?.flowWatch || b.sentiment?.positive?.summary || "—")}</p>
         </div>
       </div>
-      <p class="rpt-muted" style="margin-top:.75rem">Putusan Judge: <strong>${esc(leanId(lean))}</strong> — ${esc(b.sentiment?.judgeRationale || "")}</p>
+      <p class="rpt-muted" style="margin-top:.75rem">Lean: <strong>${esc(leanId(lean))}</strong> — ${esc(b.sentiment?.judgeRationale || "")}</p>
+      ${
+        b.verify?.note
+          ? `<p class="rpt-panel" style="margin-top:.75rem"><strong>Verify:</strong> ${esc(b.verify.note)}</p>`
+          : ""
+      }
     </div>
   </details>
 

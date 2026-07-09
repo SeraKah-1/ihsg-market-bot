@@ -1,18 +1,24 @@
 /**
- * Native web search — xAI / OpenAI Responses API (docs-minimal).
+ * Native web search — xAI / OpenAI Responses API.
  *
- * Matches official pattern:
  *   POST {customBase}/v1/responses
- *   { model, input: [{ role: "user", content }], tools: [{ type: "web_search" }] }
+ *   { model, input, tools: [{ type: "web_search" }], stream:false,
+ *     temperature, reasoning_effort (cascade) }
  *
- * - API key + base URL from Settings (custom router), NOT hardcoded api.x.ai
- * - NO temperature, NO reasoning, NO thinking, NO extra params
- * - Tool profile cascade only (bare web_search first)
+ * - API key + base URL from Settings (custom router)
+ * - Reasoning high→med→low→off + temperature (default 0.65)
+ * - Tool profile cascade (bare web_search first)
  * - Outer hybrid: native → Jina search → Google News RSS
  */
-import { resolveProviderCredentials, getProxyUrl, extractJson, modelFor } from "../ai.js";
+import { resolveProviderCredentials, getProxyUrl, extractJson, modelFor, DEFAULT_TEMP } from "../ai.js";
 import { appSettings, loadSettings } from "../state.js";
-import { shouldTryNextToolProfile } from "./reasoning.js";
+import {
+  injectReasoningParams,
+  preferredReasoningEffort,
+  reasoningEffortCascade,
+  shouldDropReasoningLevel,
+  shouldTryNextToolProfile
+} from "./reasoning.js";
 
 /** IDX / ID finance domains — xAI allows max 5 allowed_domains */
 export const IDX_SEARCH_DOMAINS = [
@@ -108,22 +114,31 @@ export function buildResponsesUrl(endpoint) {
 }
 
 /**
- * Docs-minimal Responses body — model + input + tools + stream:false.
- * stream:false wajib: banyak custom router default-stream SSE
- * (`event: response...`) yang bukan JSON object.
- * System prompt digabung ke user content (docs contoh hanya role user).
+ * Responses body: model + input + tools + stream:false + temp + optional reasoning.
+ * stream:false wajib: banyak custom router default-stream SSE.
+ * System digabung ke user content (docs contoh sering role user).
  */
-export function buildNativeResponsesBody({ model, system, user, tools }) {
+export function buildNativeResponsesBody({
+  model,
+  system,
+  user,
+  tools,
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = null
+}) {
   const content =
     system && String(system).trim()
       ? `${String(system).trim()}\n\n---\n\n${String(user || "")}`
       : String(user || "");
-  return {
+  const body = {
     model,
     input: [{ role: "user", content }],
     tools: tools && tools.length ? tools : [{ type: "web_search" }],
-    stream: false
+    stream: false,
+    temperature: temperature == null ? DEFAULT_TEMP : temperature
   };
+  if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
+  return body;
 }
 
 /**
@@ -354,10 +369,18 @@ export function buildToolProfileCascade(model, { unrestrictedWeb = false } = {})
 }
 
 /**
- * Single attempt: Responses API only, docs-minimal body.
- * Credentials = custom router (Settings endpoint + API key).
+ * Single attempt: Responses API + custom router.
  */
-async function attemptNativeOnce({ model, system, user, signal, tools, toolKind }) {
+async function attemptNativeOnce({
+  model,
+  system,
+  user,
+  signal,
+  tools,
+  toolKind,
+  temperature = DEFAULT_TEMP,
+  reasoningEffort = null
+}) {
   let endpoint;
   let apiKey;
   let useProxy;
@@ -386,7 +409,14 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
   let url = buildResponsesUrl(endpoint);
   if (useProxy) url = getProxyUrl(url);
 
-  const body = buildNativeResponsesBody({ model, system, user, tools });
+  const body = buildNativeResponsesBody({
+    model,
+    system,
+    user,
+    tools,
+    temperature,
+    reasoningEffort
+  });
 
   try {
     const res = await fetch(url, {
@@ -406,13 +436,13 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
         mode: "NATIVE_FAILED",
         error: `responses ${res.status}: ${rawText.slice(0, 320)}`,
         toolKind,
+        reasoningEffort: reasoningEffort || null,
         ok: false,
         requestUrl: url.replace(/\?.*$/, "")
       };
     }
 
     const parsed = parseResponsesPayload(rawText);
-    // Success if we have text OR citations from server-side web_search
     if (parsed.content || (parsed.citations && parsed.citations.length)) {
       return {
         content: parsed.content || "",
@@ -421,7 +451,7 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
         raw: parsed.data,
         mode: parsed.via === "sse" ? "NATIVE_RESPONSES_SSE" : "NATIVE_RESPONSES",
         toolKind,
-        reasoningEffort: null,
+        reasoningEffort: reasoningEffort || null,
         ok: true,
         requestUrl: url.replace(/\?.*$/, ""),
         parseVia: parsed.via
@@ -439,6 +469,7 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
           ? "responses_sse_empty (stream parsed, no text/citations)"
           : "responses_empty_output"),
       toolKind,
+      reasoningEffort: reasoningEffort || null,
       ok: false,
       raw: parsed.data || rawText.slice(0, 500)
     };
@@ -451,31 +482,27 @@ async function attemptNativeOnce({ model, system, user, signal, tools, toolKind 
       mode: "NATIVE_FAILED",
       error: String(e.message || e),
       toolKind,
+      reasoningEffort: reasoningEffort || null,
       ok: false
     };
   }
 }
 
 /**
- * Native web search: tool cascade only (no reasoning).
- * Body always docs-minimal via Responses API + custom router credentials.
+ * Native web search: tool profiles × reasoning cascade + temperature.
  */
 export async function chatWithNativeWebSearch({
   model,
   system,
   user,
   signal = null,
-  /** ignored — kept for call-site compat; never sent */
-  temperature: _temperature = undefined,
+  temperature = DEFAULT_TEMP,
   isJson = false,
   unrestrictedWeb = false,
-  /** ignored — reasoning disabled for native web_search */
-  reasoningEffort: _reasoningEffort = "off",
+  reasoningEffort = "auto",
   onLog = null
 }) {
   loadSettings();
-  void _temperature;
-  void _reasoningEffort;
 
   if (!String(model || "").trim()) {
     return {
@@ -489,60 +516,75 @@ export async function chatWithNativeWebSearch({
   }
 
   const toolProfiles = buildToolProfileCascade(model, { unrestrictedWeb });
+  const preferred = preferredReasoningEffort(model, reasoningEffort);
+  const efforts = reasoningEffortCascade(preferred ?? "high");
   const attempts = [];
   let last = null;
+  const temp = temperature == null ? DEFAULT_TEMP : temperature;
 
   for (const profile of toolProfiles) {
-    onLog?.(`Native Responses tools=${profile.kind} (no reasoning)`);
-    const result = await attemptNativeOnce({
-      model,
-      system,
-      user,
-      signal,
-      tools: profile.tools,
-      toolKind: profile.kind
-    });
-    last = result;
-    attempts.push({
-      tools: profile.kind,
-      reasoning: "off",
-      ok: !!result.ok,
-      error: result.error || null
-    });
-
-    if (result.ok && (result.content || result.citations?.length)) {
-      let content = result.content || "";
-      if (isJson && content) {
-        try {
-          content = extractJson(content);
-        } catch {
-          /* keep raw */
-        }
-      }
-      return {
-        ...result,
-        content,
-        mode: "NATIVE_RESPONSES",
-        reasoningEffort: null,
-        cascadeAttempts: attempts
-      };
-    }
-
-    const err = result.error || "";
-    if (/401|403|api key|unauthorized/i.test(err)) {
-      return {
-        content: "",
-        citations: [],
-        toolTraces: [],
-        mode: "NATIVE_FAILED",
-        error: err,
+    for (const effort of efforts) {
+      onLog?.(
+        `Native Responses tools=${profile.kind} reason=${effort || "off"} temp=${temp}`
+      );
+      const result = await attemptNativeOnce({
+        model,
+        system,
+        user,
+        signal,
+        tools: profile.tools,
         toolKind: profile.kind,
-        reasoningEffort: null,
-        cascadeAttempts: attempts
-      };
-    }
-    if (shouldTryNextToolProfile(err) || !result.ok) {
-      continue;
+        temperature: temp,
+        reasoningEffort: effort
+      });
+      last = result;
+      attempts.push({
+        tools: profile.kind,
+        reasoning: effort || "off",
+        ok: !!result.ok,
+        error: result.error || null
+      });
+
+      if (result.ok && (result.content || result.citations?.length)) {
+        let content = result.content || "";
+        if (isJson && content) {
+          try {
+            content = extractJson(content);
+          } catch {
+            /* keep raw */
+          }
+        }
+        return {
+          ...result,
+          content,
+          mode: result.mode || "NATIVE_RESPONSES",
+          reasoningEffort: effort || null,
+          cascadeAttempts: attempts
+        };
+      }
+
+      const err = result.error || "";
+      if (/401|403|api key|unauthorized/i.test(err)) {
+        return {
+          content: "",
+          citations: [],
+          toolTraces: [],
+          mode: "NATIVE_FAILED",
+          error: err,
+          toolKind: profile.kind,
+          reasoningEffort: effort || null,
+          cascadeAttempts: attempts
+        };
+      }
+      // Drop reasoning level on param reject; else try next effort then next tool
+      if (effort && shouldDropReasoningLevel(err)) {
+        continue;
+      }
+      if (shouldTryNextToolProfile(err) || !result.ok) {
+        // exhausted efforts for this tool → outer loop next profile
+        if (!effort || effort === efforts[efforts.length - 1]) break;
+        continue;
+      }
     }
   }
 
@@ -553,7 +595,7 @@ export async function chatWithNativeWebSearch({
     mode: "NATIVE_FAILED",
     error: last?.error || "native_cascade_exhausted",
     toolKind: last?.toolKind || null,
-    reasoningEffort: null,
+    reasoningEffort: last?.reasoningEffort || null,
     cascadeAttempts: attempts
   };
 }
@@ -659,7 +701,7 @@ function extractToolTraces(data) {
 
 /**
  * Hybrid research cascade:
- * 1) Native Responses web_search (custom router, no reasoning)
+ * 1) Native Responses web_search + reasoning cascade
  * 2) Jina search (+ optional page fetch)
  * 3) Google News RSS
  */
@@ -699,7 +741,7 @@ export async function hybridResearchSearch({
 
   if (tryNative) {
     onLog?.(
-      `Native Responses web_search (${model}) · custom router · no reasoning`
+      `Native Responses web_search (${model}) · reasoning cascade · temp=${DEFAULT_TEMP}`
     );
     const system = `Financial research agent IDX. Use web_search tool. Return JSON only:
 {"findings":[{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":""}]}
