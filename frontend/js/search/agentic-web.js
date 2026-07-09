@@ -23,7 +23,7 @@ export async function runAgenticNativeLoop({
   user,
   signal = null,
   onLog = null,
-  maxRounds = 3,
+  maxRounds = 4,
   unrestrictedWeb = true,
   temperature: _temperature = null,
   reasoningEffort = "auto",

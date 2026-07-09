@@ -540,6 +540,110 @@ html.dark-mode .rpt,
   line-height: 1.45 !important;
 }
 
+/* Indicator vault — numbers only, separate from narrative */
+.rpt-ind {
+  margin: 0.85rem 0 0.5rem !important;
+  border: 1px dashed var(--r-line) !important;
+  border-radius: 10px !important;
+  background: var(--r-soft) !important;
+  overflow: hidden !important;
+}
+.rpt-ind > summary {
+  cursor: pointer !important;
+  list-style: none !important;
+  padding: 0.55rem 0.75rem !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--r-ink3) !important;
+  font-family: var(--r-sans) !important;
+}
+.rpt-ind > summary::-webkit-details-marker { display: none !important; }
+.rpt-ind[open] > summary { border-bottom: 1px solid var(--r-line) !important; }
+.rpt-ind-body { padding: 0.65rem 0.75rem 0.85rem !important; }
+.rpt-ind-chips {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 0.35rem !important;
+  margin: 0 0 0.65rem !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+.rpt-ind-chip {
+  display: inline-flex !important;
+  align-items: baseline !important;
+  gap: 0.3rem !important;
+  padding: 0.28rem 0.5rem !important;
+  border-radius: 8px !important;
+  background: var(--r-card) !important;
+  border: 1px solid var(--r-line) !important;
+  font-family: var(--r-mono) !important;
+  font-size: 0.78rem !important;
+}
+.rpt-ind-chip .k { color: var(--r-ink3) !important; font-size: 0.68rem !important; text-transform: uppercase !important; }
+.rpt-ind-chip .v { font-weight: 600 !important; color: var(--r-ink) !important; }
+.rpt-ind-chip.up .v { color: var(--r-up) !important; }
+.rpt-ind-chip.down .v { color: var(--r-down) !important; }
+.rpt-ind-chip.warn .v { color: var(--r-warn) !important; }
+.rpt-ind-json {
+  margin: 0 !important;
+  padding: 0.65rem 0.75rem !important;
+  border-radius: 8px !important;
+  background: rgba(0,0,0,.04) !important;
+  border: 1px solid var(--r-line) !important;
+  font-family: var(--r-mono) !important;
+  font-size: 0.72rem !important;
+  line-height: 1.45 !important;
+  overflow-x: auto !important;
+  color: var(--r-ink2) !important;
+  max-height: 280px !important;
+}
+html.dark-mode .rpt-ind-json,
+.rpt.rpt-dark .rpt-ind-json {
+  background: rgba(0,0,0,.25) !important;
+}
+.rpt-lede {
+  font-size: 1.02rem !important;
+  color: var(--r-ink2) !important;
+  margin: 0 0 0.85rem !important;
+  line-height: 1.6 !important;
+}
+.rpt-insight {
+  font-family: var(--r-serif) !important;
+  font-size: 1.15rem !important;
+  color: var(--r-accent) !important;
+  margin: 0.5rem 0 1rem !important;
+  padding: 0.65rem 0.85rem !important;
+  border-left: 3px solid var(--r-accent) !important;
+  background: var(--r-soft) !important;
+  border-radius: 0 8px 8px 0 !important;
+}
+.rpt-story {
+  font-size: 1.02rem !important;
+  line-height: 1.65 !important;
+  color: var(--r-ink) !important;
+  margin: 0 0 0.85rem !important;
+}
+.rpt-chain {
+  margin: 0.5rem 0 0 !important;
+  padding-left: 1.15rem !important;
+}
+.rpt-chain li {
+  margin: 0.35rem 0 !important;
+  color: var(--r-ink2) !important;
+}
+.rpt-chain li strong { color: var(--r-accent) !important; font-weight: 600 !important; }
+.rpt-insight {
+  margin: 0.65rem 0 0 !important;
+  padding: 0.55rem 0.7rem !important;
+  border-left: 3px solid var(--r-accent) !important;
+  background: var(--r-soft) !important;
+  border-radius: 0 8px 8px 0 !important;
+  font-style: italic !important;
+  color: var(--r-ink2) !important;
+}
+
 .rpt-sc .prob {
   margin: 0.45rem 0 0 !important;
   font-family: var(--r-mono) !important;

@@ -24,7 +24,7 @@ function applyTheme(mode) {
 /** In-memory model catalog for filter + selects */
 let modelCatalog = [];
 
-const MODEL_SELECT_IDS = ["model-research", "model-analysis", "model-verify"];
+const MODEL_SELECT_IDS = ["model-research", "model-analysis", "model-writer"];
 
 /**
  * Populate role <select>s via DOM APIs (safe for ids with /, :, etc.).
@@ -91,7 +91,7 @@ function bindSettingsForm() {
   const saved = [
     s.models?.research,
     s.models?.analysis || s.models?.judge,
-    s.models?.verify || s.models?.judge
+    s.models?.writer || s.models?.verify || s.models?.judge
   ].filter(Boolean);
   const uniqueSaved = [...new Set(saved)];
   if (uniqueSaved.length && !modelCatalog.length) {
@@ -130,7 +130,9 @@ function readSettingsFromForm() {
     models: {
       research: $("model-research")?.value?.trim() || "gpt-4o-mini",
       analysis: $("model-analysis")?.value?.trim() || "gpt-4o-mini",
-      verify: $("model-verify")?.value?.trim() || "gpt-4o-mini"
+      writer: $("model-writer")?.value?.trim() || "gpt-4o-mini",
+      // keep verify alias in sync for old localStorage readers
+      verify: $("model-writer")?.value?.trim() || "gpt-4o-mini"
     }
   });
   logLine("Settings saved");

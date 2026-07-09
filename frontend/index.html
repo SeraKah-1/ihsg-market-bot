@@ -112,7 +112,7 @@
               <input id="model-filter" type="search" placeholder="Ketik untuk filter…" spellcheck="false" autocomplete="off" />
             </label>
             <label class="field">
-              <span class="field-label">Researcher</span>
+              <span class="field-label">Research</span>
               <select id="model-research" class="model-select"></select>
             </label>
             <label class="field">
@@ -120,11 +120,11 @@
               <select id="model-analysis" class="model-select"></select>
             </label>
             <label class="field">
-              <span class="field-label">Verify</span>
-              <select id="model-verify" class="model-select"></select>
+              <span class="field-label">Writer</span>
+              <select id="model-writer" class="model-select"></select>
             </label>
             <p class="fineprint" style="text-align:left;margin-top:0.5rem">
-              3 agent: Researcher (web hunt) → Analysis (briefing) → Verify (skeptis + klarifikasi). Reasoning cascade; temperature always omit.
+              3 agent: Research (web hunt) → Analysis (verifikasi + crosscheck + hidden) → Writer (narasi presentasi). Indikator = JSON card, bukan di teks. Temp omit.
             </p>
           </div>
         </details>
@@ -176,7 +176,7 @@
           <summary class="acc-sum"><span>Deep dive</span><span class="acc-hint">1 emiten</span></summary>
           <div class="acc-body">
             <p class="fineprint" style="text-align:left;margin:0 0 0.5rem">
-              Agentic deep dive: multi-round native <code>web_search</code> + reasoning; temperature omit. Fallback Jina/news jika native gagal.
+              Deep dive: web hunt lebih dalam (multi-round + multi-bucket: bisnis, peer, lapkeu, aksi korp, proyek, legal, ownership, sentimen, makro). Indikator di JSON card; narasi terpisah.
             </p>
             <label class="field">
               <span class="field-label">Kode emiten</span>

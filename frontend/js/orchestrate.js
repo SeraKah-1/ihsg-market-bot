@@ -2,7 +2,7 @@ import { appSettings, loadSettings, logLine, setStatus } from "./state.js";
 import { detectSearchMode, searchModeBanner } from "./search/capability.js";
 import { runResearcher } from "./agents/researcher.js";
 import { runAnalysis } from "./agents/analysis.js";
-import { runVerify } from "./agents/verify.js";
+import { runWriter } from "./agents/writer.js";
 import {
   renderBriefingHtml,
   renderDeepDiveHtml,
@@ -19,8 +19,7 @@ export function abortRun() {
 }
 
 /**
- * Pipeline v2: Researcher (web) → Analysis → Verify (optional web).
- * No Fear/Positive/Judge split.
+ * Pipeline v3: Research (web) → Analysis (verify/crosscheck) → Writer (presentasi).
  */
 export async function runPipeline({ skipAi = false } = {}) {
   loadSettings();
@@ -81,8 +80,8 @@ export async function runPipeline({ skipAi = false } = {}) {
     const searchMode = detectSearchMode();
     logLine(searchModeBanner(searchMode));
 
-    // 1) Researcher — owns search plan + web
-    setStatus("Researcher (web)…", "busy");
+    // 1) Research — comprehensive web hunt
+    setStatus("Research (web)…", "busy");
     const research = await runResearcher({
       shortlistPack,
       searchMode,
@@ -91,12 +90,12 @@ export async function runPipeline({ skipAi = false } = {}) {
       onLog: logLine
     });
     logLine(
-      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length}`
+      `Research done mode=${research.agentMeta?.mode || "?"} hotTakes=${(research.hotTakes || []).length} findings=${(research.findings || []).length}`
     );
 
-    // 2) Analysis — full briefing
-    setStatus("Analysis…", "busy");
-    let briefing = await runAnalysis({
+    // 2) Analysis — thesis + verify/crosscheck/hidden
+    setStatus("Analysis + verify…", "busy");
+    const analysis = await runAnalysis({
       shortlistPack,
       research,
       memory,
@@ -106,12 +105,12 @@ export async function runPipeline({ skipAi = false } = {}) {
       onLog: logLine
     });
 
-    // 3) Verify — skeptic + optional clarify search
-    setStatus("Verify…", "busy");
-    briefing = await runVerify({
+    // 3) Writer — presentasi narasi untuk HTML
+    setStatus("Writer…", "busy");
+    let briefing = await runWriter({
       shortlistPack,
       research,
-      briefing,
+      analysis,
       searchMode,
       runId,
       signal,
@@ -123,6 +122,7 @@ export async function runPipeline({ skipAi = false } = {}) {
       searchPlan: research.searchPlan,
       agentMeta: research.agentMeta
     };
+    briefing.pipeline = "research→analysis→writer";
 
     await fetch("/api/runs", {
       method: "POST",
@@ -155,10 +155,10 @@ export async function runPipeline({ skipAi = false } = {}) {
     logLine(
       "Done. lean=" +
         briefing.sentiment?.judgeLean +
-        " verify=" +
-        (briefing.verify?.note || "").slice(0, 80)
+        " writer=" +
+        (briefing.presentation?.headline || briefing.writerMeta?.note || "").slice(0, 80)
     );
-    return { shortlistPack, briefing, research };
+    return { shortlistPack, briefing, research, analysis };
   } catch (e) {
     if (e.name === "AbortError") {
       setStatus("Dibatalkan", "warn");

@@ -1,22 +1,24 @@
 /**
  * Structured JSON → human-readable HTML (briefing + deep dive).
- * Setiap angka: tile terpisah + warna + makna. Bukan dump jargon.
+ * Narasi = prose. Indikator = card + JSON terpisah (tidak nyampur teks).
  */
 import { REPORT_CSS, wrapStandaloneHtml } from "./report-theme.js";
 import {
-  glossRvol,
   glossChangePct,
-  glossZret,
-  glossStructure,
-  glossVolumeTrend,
-  glossRegime,
-  glossExcess,
   plainFromHard,
   plainMarketFromHard,
   heuristicPriceOutlook,
   outlookBadgeClass,
   outlookLabel
 } from "./metric-gloss.js";
+import {
+  packMarketIndicators,
+  packTickerIndicators,
+  chipsFromMarketPack,
+  chipsFromTickerPack,
+  attachIndicatorsToBriefing,
+  attachIndicatorsToDeepDive
+} from "./indicators-pack.js";
 
 export function renderBriefingHtml(b) {
   if (!b) return emptyBox("Empty briefing");
@@ -29,6 +31,7 @@ export function renderBriefingHtml(b) {
   const regime = b.marketRegime || {};
   const leanCls = lean === "positive" ? "up" : lean === "fear" ? "down" : "neutral";
   const mw = b.marketWide || {};
+  const pres = b.presentation || {};
   const plainM = {
     ...plainMarketFromHard({
       marketRegime: regime,
@@ -36,44 +39,46 @@ export function renderBriefingHtml(b) {
       breadth: b.breadth
     }),
     ...(mw.plain || {}),
-    plainHeadline: mw.plainHeadline || mw.plain?.plainHeadline,
+    plainHeadline:
+      pres.headline || mw.plainHeadline || mw.plain?.plainHeadline,
     whatItMeans: mw.whatItMeans || mw.plain?.whatItMeans,
-    nextActions: mw.nextActions || mw.plain?.nextActions
+    nextActions: pres.checklist || mw.nextActions || mw.plain?.nextActions
   };
 
   const macroTag = mw.macroOutlook?.tag || mw.outlookTag || "biasa";
   const fundTag = mw.fundamentalsOutlook?.tag || null;
 
+  // Ensure indicators pack exists even if agent skipped attach
+  if (!b.indicators) attachIndicatorsToBriefing(b, b);
+  const marketInd = b.indicators?.market || packMarketIndicators(b);
   const cards = (b.shortlist || []).map((s) => renderTickerCard(s)).join("");
+  const chain = Array.isArray(mw.reasoningChain) ? mw.reasoningChain : [];
+  const links = Array.isArray(mw.crossTickerLinks)
+    ? mw.crossTickerLinks
+    : Array.isArray(b.crossTickerLinks)
+      ? b.crossTickerLinks
+      : [];
+  const aMeta = b.analysisMeta || b.verify || {};
+  const sections = Array.isArray(pres.sections) ? pres.sections : [];
 
-  const ihsgMetrics = [
-    glossChangePct(ihsg.changePct, "IHSG 1 hari"),
-    glossRegime(regime.tag || mw.regimeTag),
-    glossVolumeTrend(ihsg.context?.vol?.volumeTrend),
-    {
-      label: "Breadth (naik/turun)",
-      value:
-        b.breadth?.total != null
-          ? `${b.breadth.adv ?? 0} / ${b.breadth.dec ?? 0}`
-          : "—",
-      tone:
-        (b.breadth?.adv || 0) > (b.breadth?.dec || 0)
-          ? "up"
-          : (b.breadth?.adv || 0) < (b.breadth?.dec || 0)
-            ? "down"
-            : "neutral",
-      meaning:
-        b.breadth?.total != null
-          ? `Dari sampel: ${b.breadth.adv ?? 0} emiten naik, ${b.breadth.dec ?? 0} turun. Breadth lemah = drop indeks tidak “sehat” untuk beta chase.`
-          : "Breadth tidak tersedia."
-    }
-  ];
+  const headline =
+    pres.headline ||
+    plainM.plainHeadline ||
+    b.sentiment?.judgeRationale ||
+    plainMarketFromHard({ marketRegime: regime, ihsg, breadth: b.breadth }).plainHeadline;
+  const lede =
+    pres.lede ||
+    b.sentiment?.analysisSummary ||
+    plainM.whatItMeans ||
+    "";
+  const throughline = pres.throughline || mw.story || "";
+  const punchline = pres.punchline || b.sentiment?.analysisSummary || "";
 
   return `
 <div class="rpt ${isDark() ? "rpt-dark" : ""}">
 <div class="rpt-wrap">
   <header class="rpt-head">
-    <p class="rpt-kicker">Market briefing · dibaca manusia</p>
+    <p class="rpt-kicker">${esc(pres.kicker || "Market briefing · narasi · indikator di kartu JSON")}</p>
     <h1>IHSG · ${esc(b.asOfSession || "")}</h1>
     <div class="rpt-badges">
       <span class="rpt-badge ${leanCls}">Bias ${esc(leanId(lean))}</span>
@@ -88,32 +93,45 @@ export function renderBriefingHtml(b) {
   </header>
 
   <details class="rpt-section" open>
-    <summary>Inti: apa yang terjadi &amp; apa yang dilakukan</summary>
+    <summary>Cerita &amp; keputusan</summary>
     <div class="rpt-body">
-      <p class="rpt-lead">${esc(
-        plainM.plainHeadline ||
-          b.sentiment?.judgeRationale ||
-          plainMarketFromHard({ marketRegime: regime, ihsg, breadth: b.breadth }).plainHeadline
-      )}</p>
-      <div class="rpt-qa">
+      <p class="rpt-lead">${esc(headline)}</p>
+      ${lede ? `<p class="rpt-lede">${esc(lede)}</p>` : ""}
+      ${throughline ? `<p class="rpt-story">${esc(throughline)}</p>` : ""}
+      ${punchline ? `<p class="rpt-insight">${esc(punchline)}</p>` : ""}
+      ${
+        sections.length
+          ? sections
+              .map(
+                (sec) =>
+                  `<div class="rpt-panel" style="margin-top:.65rem">
+                    <h4>${esc(sec.title || sec.id || "Bagian")}</h4>
+                    <p>${esc(sec.body || "—")}</p>
+                  </div>`
+              )
+              .join("")
+          : `<div class="rpt-qa">
         <div class="rpt-qa-item">
           <p class="q">Apa artinya</p>
-          <p class="a">${esc(
-            plainM.whatItMeans ||
-              b.sentiment?.judgeRationale ||
-              regime.note ||
-              "—"
-          )}</p>
+          <p class="a">${esc(plainM.whatItMeans || regime.note || "—")}</p>
         </div>
         <div class="rpt-qa-item">
           <p class="q">Ikuti uang / jebakan</p>
-          <p class="a">${esc(mw.followMoneyThesis || "—")}</p>
+          <p class="a">${esc(mw.followMoneyThesis || b.sentiment?.flowWatch || "—")}</p>
         </div>
         <div class="rpt-qa-item do">
           <p class="q">Lakukan sekarang</p>
           <p class="a">${esc(mw.bestMoveOverall || "—")}</p>
         </div>
-      </div>
+      </div>`
+      }
+      ${
+        chain.length
+          ? `<p class="rpt-subh">Rantai reasoning</p><ol class="rpt-chain">${chain
+              .map((step, i) => `<li><strong>${i + 1}.</strong> ${esc(String(step))}</li>`)
+              .join("")}</ol>`
+          : ""
+      }
       ${
         (plainM.nextActions || []).length
           ? `<p class="rpt-subh">Checklist</p><ul class="rpt-actions">${(plainM.nextActions || [])
@@ -121,6 +139,7 @@ export function renderBriefingHtml(b) {
               .join("")}</ul>`
           : ""
       }
+      ${pres.closingNote ? `<p class="rpt-muted" style="margin-top:.75rem">${esc(pres.closingNote)}</p>` : ""}
       <div class="rpt-callout ${esc(String(macroTag).toLowerCase())}" style="margin-top:1rem">
         <p class="co-title">Outlook tape / makro · ${esc(outlookLabel(macroTag))}</p>
         <p class="co-body">${esc(
@@ -131,15 +150,6 @@ export function renderBriefingHtml(b) {
             "—"
         )}</p>
       </div>
-    </div>
-  </details>
-
-  <details class="rpt-section" open>
-    <summary>Angka IHSG (tiap angka = 1 kartu + makna)</summary>
-    <div class="rpt-body">
-      ${metricGrid(ihsgMetrics)}
-      <p class="rpt-subh">Horizon IHSG</p>
-      ${horizonTable(ihsg.context)}
       <p class="rpt-subh">Tema</p>
       ${chips(mw.themes || []) || `<p class="rpt-muted">—</p>`}
       <p class="rpt-subh">Yang belum ketemu sebabnya</p>
@@ -148,10 +158,17 @@ export function renderBriefingHtml(b) {
   </details>
 
   <details class="rpt-section" open>
-    <summary>Analysis · Verify</summary>
+    <summary>Indikator pasar (JSON · terpisah dari narasi)</summary>
+    <div class="rpt-body">
+      ${indicatorsPanel("IHSG · breadth · regime", marketInd, chipsFromMarketPack(marketInd), true)}
+    </div>
+  </details>
+
+  <details class="rpt-section" open>
+    <summary>Analysis · crosscheck &amp; hidden</summary>
     <div class="rpt-body">
       <div class="rpt-panel" style="margin-bottom:.75rem">
-        <h4>Analysis punch</h4>
+        <h4>Punch</h4>
         <p>${esc(b.sentiment?.analysisSummary || b.sentiment?.judgeRationale || "—")}</p>
       </div>
       <div class="rpt-grid-2">
@@ -164,12 +181,15 @@ export function renderBriefingHtml(b) {
           <p>${esc(b.sentiment?.flowWatch || b.sentiment?.positive?.summary || "—")}</p>
         </div>
       </div>
-      <p class="rpt-muted" style="margin-top:.75rem">Lean: <strong>${esc(leanId(lean))}</strong> — ${esc(b.sentiment?.judgeRationale || "")}</p>
       ${
-        b.verify?.note
-          ? `<p class="rpt-panel" style="margin-top:.75rem"><strong>Verify:</strong> ${esc(b.verify.note)}</p>`
+        links.length
+          ? `<p class="rpt-subh">Hubungan antar emiten</p><ul class="rpt-list">${links
+              .map((x) => `<li>${esc(typeof x === "string" ? x : x.note || JSON.stringify(x))}</li>`)
+              .join("")}</ul>`
           : ""
       }
+      ${renderAnalysisMeta(aMeta)}
+      <p class="rpt-muted" style="margin-top:.75rem">Lean: <strong>${esc(leanId(lean))}</strong> — ${esc(b.sentiment?.judgeRationale || "")}</p>
     </div>
   </details>
 
@@ -194,7 +214,7 @@ export function renderBriefingHtml(b) {
   </details>
 
   <details class="rpt-section" open>
-    <summary>Shortlist · apa / kenapa / lakukan (${(b.shortlist || []).length})</summary>
+    <summary>Shortlist · narasi (${(b.shortlist || []).length})</summary>
     <div class="rpt-body">
       ${cards || `<p class="rpt-muted">Kosong</p>`}
     </div>
@@ -207,7 +227,7 @@ export function renderBriefingHtml(b) {
 
   <footer class="rpt-footer">
     <p>${esc(b.disclaimer || "Bukan saran investasi. Keputusan akhir di user.")}</p>
-    <p>Stance: follow the money · FOMO boleh · jangan exit liquidity · angka code = fakta · prose AI = hipotesis</p>
+    <p>Pipeline: Research → Analysis(verify) → Writer · indikator = JSON card · prose = narasi</p>
   </footer>
 </div>
 </div>`;
@@ -215,6 +235,7 @@ export function renderBriefingHtml(b) {
 
 export function renderDeepDiveHtml(d) {
   if (!d) return emptyBox("Empty deep dive");
+  if (!d.indicators) attachIndicatorsToDeepDive(d, { metrics: d.metrics, context: d.context || d.marketContext, vsIhsg: d.vsIhsg });
 
   const c = d.company || {};
   const f = d.financials || {};
@@ -224,29 +245,30 @@ export function renderDeepDiveHtml(d) {
   const cats = d.catalysts || [];
   const needles = d.needles || [];
   const fc = d.forecast || {};
-  const ctx = d.marketContext || d.context;
   const plain = d.plain || {};
   const outlook = d.outlook || {};
-  const priceTag = outlook.price || fc.priceOutlook || heuristicPriceOutlook({ context: ctx, metrics: d.metrics }).tag;
+  const ind = d.indicators || packTickerIndicators({
+    ticker: d.ticker,
+    metrics: d.metrics,
+    context: d.context || d.marketContext,
+    vsIhsg: d.vsIhsg
+  });
+  const hardRow = {
+    metrics: d.metrics,
+    context: d.context || d.marketContext
+  };
+  const priceTag =
+    outlook.price || fc.priceOutlook || heuristicPriceOutlook(hardRow).tag;
   const fundTag = outlook.fundamentals || f.outlookTag || "biasa";
   const combTag =
     outlook.combined ||
     (fc.lean === "positive" ? "cerah" : fc.lean === "fear" ? "suram" : fundTag);
 
-  const metrics = [];
-  if (d.metrics || ctx?.d1) {
-    metrics.push(glossChangePct(d.metrics?.changePct ?? ctx?.d1?.retPct, "1 hari"));
-    metrics.push(glossRvol(d.metrics?.rvol ?? ctx?.d1?.rvol));
-    metrics.push(glossStructure(ctx?.m1?.structure || ctx?.w1?.structure));
-    metrics.push(glossVolumeTrend(ctx?.vol?.volumeTrend));
-    metrics.push(glossExcess(d.vsIhsg));
-  }
-
   return `
 <div class="rpt ${isDark() ? "rpt-dark" : ""}">
 <div class="rpt-wrap">
   <header class="rpt-head">
-    <p class="rpt-kicker">Deep dive · dibaca manusia</p>
+    <p class="rpt-kicker">Deep dive · narasi dulu · indikator JSON</p>
     <h1>${esc(d.ticker || "")} · ${esc(c.name || "—")}</h1>
     <div class="rpt-badges">
       <span class="rpt-badge neutral">${esc(c.sector || "sektor?")}</span>
@@ -259,8 +281,9 @@ export function renderDeepDiveHtml(d) {
   </header>
 
   <details class="rpt-section" open>
-    <summary>Inti: apa · kenapa · lakukan</summary>
+    <summary>Narasi: apa · kenapa · lakukan</summary>
     <div class="rpt-body">
+      ${d.story ? `<p class="rpt-story">${esc(d.story)}</p>` : ""}
       <div class="rpt-qa">
         <div class="rpt-qa-item">
           <p class="q">Apa yang terjadi</p>
@@ -279,6 +302,13 @@ export function renderDeepDiveHtml(d) {
           <p class="a">${esc(fc.invalidation || "—")}</p>
         </div>
       </div>
+      ${
+        Array.isArray(d.reasoningChain) && d.reasoningChain.length
+          ? `<p class="rpt-subh">Rantai reasoning</p><ol class="rpt-chain">${d.reasoningChain
+              .map((step, i) => `<li><strong>${i + 1}.</strong> ${esc(String(step))}</li>`)
+              .join("")}</ol>`
+          : ""
+      }
       <div class="rpt-callout ${esc(String(combTag).toLowerCase())}" style="margin-top:1rem">
         <p class="co-title">Proyeksi · ${esc(outlookLabel(combTag))}</p>
         <p class="co-body">${esc(
@@ -287,20 +317,9 @@ export function renderDeepDiveHtml(d) {
             "Gabungkan tape harga + lapkeu/sentimen/makro — lihat bagian di bawah."
         )}</p>
       </div>
+      ${indicatorsPanel(`Indikator ${d.ticker || ""} (JSON)`, ind, chipsFromTickerPack(ind))}
     </div>
   </details>
-
-  ${
-    metrics.length
-      ? `<details class="rpt-section" open>
-    <summary>Angka harga (makna per kartu)</summary>
-    <div class="rpt-body">
-      ${metricGrid(metrics)}
-      ${horizonTable(ctx)}
-    </div>
-  </details>`
-      : ""
-  }
 
   <details class="rpt-section" open>
     <summary>Bisnis</summary>
@@ -412,15 +431,8 @@ function renderTickerCard(s) {
   const priceOut = s.outlook?.price || hardPlain.outlookTag;
   const fundOut = fund.outlookTag || s.outlook?.fundamentals || "biasa";
   const combOut = s.outlook?.combined || (risk === "high" ? "suram" : priceOut);
-
-  const tiles = [
-    glossChangePct(s.metrics?.changePct, "1 hari"),
-    glossRvol(s.metrics?.rvol),
-    glossZret(s.metrics?.zRet),
-    glossStructure(s.context?.m1?.structure || s.context?.w1?.structure),
-    glossVolumeTrend(s.context?.vol?.volumeTrend),
-    glossExcess(s.vsIhsg)
-  ];
+  const ind = s.indicators || packTickerIndicators(s);
+  const narrative = s.narrative || "";
 
   return `
   <article class="rpt-card">
@@ -432,6 +444,9 @@ function renderTickerCard(s) {
         <span class="rpt-badge ${risk === "high" ? "down" : risk === "med" ? "neutral" : "up"}">Exit-liq ${esc(riskId(risk))}</span>
       </div>
     </div>
+
+    ${s.insight ? `<p class="rpt-insight">${esc(s.insight)}</p>` : ""}
+    ${narrative ? `<p class="rpt-story">${esc(narrative)}</p>` : ""}
 
     <div class="rpt-qa">
       <div class="rpt-qa-item">
@@ -453,8 +468,7 @@ function renderTickerCard(s) {
       }
     </div>
 
-    <p class="rpt-subh">Angka (terpisah · berwarna · bermakna)</p>
-    ${metricGrid(tiles)}
+    ${indicatorsPanel(`Indikator ${s.ticker} (JSON)`, ind, chipsFromTickerPack(ind), true)}
 
     <hr class="rpt-divider"/>
 
@@ -474,8 +488,11 @@ function renderTickerCard(s) {
       </div>
     </div>
 
-    <p class="rpt-subh">Horizon harga</p>
-    ${horizonTable(s.context)}
+    ${
+      s.hiddenNotes
+        ? `<p class="rpt-subh">Hidden / deep</p><p>${esc(s.hiddenNotes)}</p>`
+        : ""
+    }
 
     <p class="rpt-subh">Alasan masuk shortlist</p>
     ${chips(why) || `<p class="rpt-muted">—</p>`}
@@ -492,18 +509,78 @@ function renderTickerCard(s) {
   </article>`;
 }
 
-function metricGrid(items) {
-  const arr = (items || []).filter(Boolean);
-  if (!arr.length) return "";
-  return `<div class="rpt-metrics">${arr
-    .map(
-      (m) => `<div class="rpt-metric">
-      <span class="m-lab">${esc(m.label)}</span>
-      <span class="m-val ${esc(m.tone || "")}">${esc(m.value)}</span>
-      <span class="m-hint">${esc(m.meaning || "")}</span>
-    </div>`
-    )
-    .join("")}</div>`;
+function renderAnalysisMeta(aMeta) {
+  if (!aMeta || typeof aMeta !== "object") return "";
+  const hidden = aMeta.hiddenContext || [];
+  const missed = aMeta.missedByResearch || aMeta.missedItems || [];
+  const doubts = aMeta.residualDoubts || [];
+  const checks = aMeta.crossChecks || [];
+  const note = aMeta.note || "";
+  if (!hidden.length && !missed.length && !doubts.length && !checks.length && !note) {
+    return "";
+  }
+  return `
+    <div class="rpt-panel" style="margin-top:.85rem">
+      <h4>Verifikasi Analysis</h4>
+      ${note ? `<p>${esc(note)}</p>` : ""}
+      ${
+        checks.length
+          ? `<p class="rpt-subh">Crosscheck</p><ul class="rpt-list">${checks
+              .map((c) => {
+                if (typeof c === "string") return `<li>${esc(c)}</li>`;
+                return `<li><strong>${esc(c.verdict || "—")}</strong> — ${esc(c.claim || "")} <span class="rpt-muted">(${esc(c.vs || "")}) ${esc(c.note || "")}</span></li>`;
+              })
+              .join("")}</ul>`
+          : ""
+      }
+      ${
+        hidden.length
+          ? `<p class="rpt-subh">Hidden / deep context</p><ul class="rpt-list">${hidden
+              .map((x) => `<li>${esc(typeof x === "string" ? x : x.note || JSON.stringify(x))}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+      ${
+        missed.length
+          ? `<p class="rpt-subh">Yang kira-kira dilewat Research</p><ul class="rpt-list">${missed
+              .map((x) => `<li>${esc(String(x))}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+      ${
+        doubts.length
+          ? `<p class="rpt-subh">Sisa ragu</p><ul class="rpt-list">${doubts
+              .map((x) => `<li>${esc(String(x))}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+    </div>`;
+}
+
+/** Collapsible vault: chips + pretty JSON — keeps numbers out of narrative */
+function indicatorsPanel(title, jsonObj, chipList, open = false) {
+  if (!jsonObj) return "";
+  const chipsHtml = (chipList || []).length
+    ? `<ul class="rpt-ind-chips">${chipList
+        .map(
+          (c) =>
+            `<li class="rpt-ind-chip ${esc(c.tone || "")}"><span class="k">${esc(c.k)}</span><span class="v">${esc(c.v)}</span></li>`
+        )
+        .join("")}</ul>`
+    : "";
+  let pretty = "";
+  try {
+    pretty = JSON.stringify(jsonObj, null, 2);
+  } catch {
+    pretty = String(jsonObj);
+  }
+  return `<details class="rpt-ind"${open ? " open" : ""}>
+    <summary>${esc(title || "Indikator · JSON")}</summary>
+    <div class="rpt-ind-body">
+      ${chipsHtml}
+      <pre class="rpt-ind-json">${esc(pretty)}</pre>
+    </div>
+  </details>`;
 }
 
 function scenarioBox(lab, sc) {
@@ -513,76 +590,6 @@ function scenarioBox(lab, sc) {
     <p class="body">${esc(sc.narrative || "—")}</p>
     <p class="prob">${sc.prob != null ? `peluang ~${fmt(Number(sc.prob) * (Number(sc.prob) <= 1 ? 100 : 1))}%` : ""}${sc.horizon ? ` · ${esc(sc.horizon)}` : ""}</p>
   </div>`;
-}
-
-function horizonTable(ctx) {
-  if (!ctx || !ctx.ok) {
-    return `<p class="rpt-muted" style="margin-top:.75rem">Context horizon tidak tersedia (force refresh data).</p>`;
-  }
-  const rows = [
-    {
-      h: "1 hari",
-      ret: ctx.d1?.retPct,
-      slope: null,
-      struct: null,
-      note: ctx.d1?.rvol != null ? glossRvol(ctx.d1.rvol).meaning : "—"
-    },
-    {
-      h: "1 minggu",
-      ret: ctx.w1?.retPct,
-      slope: ctx.w1?.slopeDeg,
-      struct: ctx.w1?.structure,
-      note: glossStructure(ctx.w1?.structure).meaning
-    },
-    {
-      h: "1 bulan",
-      ret: ctx.m1?.retPct,
-      slope: ctx.m1?.slopeDeg,
-      struct: ctx.m1?.structure,
-      note:
-        ctx.m1?.volAnnPct != null
-          ? `Vol ~${fmt(ctx.m1.volAnnPct)}% ann. ${glossStructure(ctx.m1?.structure).meaning}`
-          : glossStructure(ctx.m1?.structure).meaning
-    }
-  ];
-  if (ctx.y1) {
-    rows.push({
-      h: "1 tahun",
-      ret: ctx.y1.retPct,
-      slope: ctx.y1.slopeDeg,
-      struct: null,
-      note: ctx.y1.volAnnPct != null ? `Vol ~${fmt(ctx.y1.volAnnPct)}% ann` : "—"
-    });
-  }
-  const body = rows
-    .map(
-      (r) => `<tr>
-      <td>${esc(r.h)}</td>
-      <td class="num ${clsSign(r.ret)}">${signed(r.ret)}%</td>
-      <td class="num">${r.slope == null ? "—" : signed(r.slope) + "°"}</td>
-      <td>${esc(r.struct || "—")}</td>
-      <td class="rpt-muted">${esc(r.note)}</td>
-    </tr>`
-    )
-    .join("");
-  const vt = glossVolumeTrend(ctx.vol?.volumeTrend);
-  return `
-  <table class="rpt-table">
-    <thead>
-      <tr>
-        <th>Jangka</th>
-        <th>Return</th>
-        <th>Kemiringan</th>
-        <th>Struktur</th>
-        <th>Arti</th>
-      </tr>
-    </thead>
-    <tbody>${body}</tbody>
-  </table>
-  <p class="rpt-meta" style="margin-top:.5rem">
-    ATR ~${fmt(ctx.vol?.atrPct14)}% · vol realisasi ~${fmt(ctx.vol?.realizedVol20dAnnPct)}%/th ·
-    volume: <span class="${vt.tone}">${esc(vt.value)}</span> — ${esc(vt.meaning)}
-  </p>`;
 }
 
 function flowSteps(b) {

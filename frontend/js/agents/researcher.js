@@ -42,16 +42,28 @@ function seedQueriesFromPack(shortlistPack) {
   const day = shortlistPack.day || "";
   const qs = [
     `IHSG ${day} penopang pemberat penyebab`,
-    `IHSG vs global ${day} underperform OR rebound`
+    `IHSG vs global ${day} underperform OR rebound`,
+    `IHSG ${day} asing lokal net buy sell`,
+    `rupiah BI rate yield Indonesia pasar saham`,
+    `Indonesia stock market news ${day} catalyst`
   ];
   for (const s of shortlistPack.shortlist || []) {
-    qs.push(`${s.ticker} saham berita IDX`);
-    qs.push(`${s.ticker} right issue OR buyback OR aksi korporasi OR lapkeu`);
-    if (s.metrics?.ret1dPct != null && Math.abs(s.metrics.ret1dPct) >= 2) {
-      qs.push(`${s.ticker} kenapa ${s.metrics.ret1dPct > 0 ? "naik" : "turun"}`);
+    const t = s.ticker;
+    qs.push(`${t} saham berita IDX ${day}`.trim());
+    qs.push(`${t} right issue OR buyback OR aksi korporasi OR private placement`);
+    qs.push(`${t} laporan keuangan OR laba OR revenue OR guidance OR dividen`);
+    qs.push(`${t} proyek OR kontrak OR ekspansi OR capex`);
+    qs.push(`${t} OJK OR BEI OR denda OR litigasi OR free float`);
+    const ret = s.metrics?.ret1dPct ?? s.metrics?.changePct;
+    if (ret != null && Math.abs(ret) >= 2) {
+      qs.push(`${t} kenapa ${ret > 0 ? "naik" : "turun"} saham`);
+    }
+    if (s.metrics?.rvol != null && s.metrics.rvol >= 1.4) {
+      qs.push(`${t} volume lonjak OR unusual volume`);
     }
   }
-  return qs.slice(0, 16);
+  // de-dupe preserve order
+  return [...new Set(qs)].slice(0, 36);
 }
 
 function normalizeResearch(out, shortlistPack, meta = {}) {
@@ -134,10 +146,26 @@ export async function runResearcher({
       user: JSON.stringify(hardUser, null, 2),
       signal,
       onLog,
-      maxRounds: 3,
+      maxRounds: 6,
       unrestrictedWeb: true,
       temperature: null,
       reasoningEffort: "auto",
+      intermediateHint: `Hunt KOMPREHENSIF multi-angle:
+- IHSG penopang/pemberat + vs global + asing/lokal
+- Makro (BI, rupiah, komoditas relevan)
+- Per ticker: sesi, aksi korp, lapkeu/proyek, litigasi/OJK, peer bila perlu
+Jangan done dini. Tutup gap dulu.
+JSON:
+{
+  "status": "continue|done",
+  "reasoning_brief": "",
+  "queries_used": [],
+  "findings": [{"claim":"","sourceTier":"","url":"","query":"","ticker":"","bucket":"market|macro|session|corp_action|financials|project|legal|peer"}],
+  "coverage": {"market":false,"macro":false,"tickersWithHits":[]},
+  "gaps": [],
+  "next_queries": []
+}
+done HANYA jika: market+macro ada temuan DAN (mayoritas ticker ≥1 finding ATAU unexplained jelas per ticker kosong).`,
       finalSchemaHint: researchPackSchema()
     });
 
@@ -240,7 +268,7 @@ export async function runResearcher({
               searchMode === "DEGRADED"
                 ? "Tanpa web. Jangan mengarang berita."
                 : "Rangkum searchResults jadi research pack. Hot takes boleh tajam.",
-            searchResults: searchResults.slice(0, 40)
+            searchResults: searchResults.slice(0, 60)
           },
           null,
           2

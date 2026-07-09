@@ -26,7 +26,7 @@ export function detectSearchMode() {
 
 export function searchModeBanner(mode) {
   if (mode === "FULL") {
-    return "Web: FULL — Researcher agentic native web_search + reasoning cascade (temp omit) → Jina → news. Pipeline: Researcher → Analysis → Verify.";
+    return "Web: FULL — Research agentic web_search (komprehensif) → Jina → news. Pipeline: Research → Analysis(verify) → Writer.";
   }
   if (mode === "FALLBACK") {
     return "Web: FALLBACK — skip native; Jina search + Google News RSS saja.";

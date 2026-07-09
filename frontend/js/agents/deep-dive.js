@@ -4,27 +4,35 @@
  * Fallback: news/Jina search pack + chatJson tanpa tools (no page fetch).
  */
 import { chatJson, modelFor, parseJsonLoose, salvageFindingsFromText } from "../ai.js";
-import { GLOBAL_RULES } from "./constitution.js";
+import { GLOBAL_RULES, deepDiveNarrativeRules } from "./constitution.js";
 import { modelSupportsNativeSearch } from "../search/native-search.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
 import { hybridResearchSearch, researchModel } from "../search/native-search.js";
 import { plainFromHard, heuristicPriceOutlook } from "../metric-gloss.js";
+import { attachIndicatorsToDeepDive } from "../indicators-pack.js";
 
 export function deepDiveSystem() {
   return (
     GLOBAL_RULES +
+    "\n\n" +
+    deepDiveNarrativeRules() +
     `
 
-ROLE: Deep-dive emiten IDX — chat trader waras, bukan laporan formal.
-1) Baca hard metrics dulu.
-2) Web hunt dinamis: bisnis, lapkeu, proyek, aksi korp, denda, right issue, makro sektor.
-3) Outlook tape + funda (cerah|biasa|suram) + gabungan — boleh beda.
-4) plain: apa / kenapa / lakukan — punchy, boleh tajam.
+ROLE: Deep-dive emiten IDX — analist yang ngeburu fakta + cerita kuat.
+1) Baca hard metrics (referensi) — JANGAN dump ke prose.
+2) Web hunt KOMPREHENSIF (multi-round):
+   - profil bisnis + peer sektor
+   - lapkeu / guidance / dividen (multi sumber)
+   - aksi korp: right issue, buyback, private placement, stock split
+   - proyek / kontrak / ekspansi / capex
+   - litigasi, denda, OJK/BEI, free float
+   - sentimen media + makro sektor
+3) story + reasoningChain yang nyambung (setup → bukti search → keputusan).
+4) plain + outlook tape/funda/combined.
 5) Official / media / rumor. Jangan mengarang angka lapkeu.
-6) Forecast + invalidation + exit-liq yang bisa dicek.
-7) 1 insight "wow" per bagian penting, bukan dump indikator.
+6) Forecast + invalidation + exit-liq.
 
-Output JSON ketat sesuai schema.`
+Output JSON ketat. Prose tanpa rantai indikator.`
   );
 }
 
@@ -43,10 +51,12 @@ export function deepDiveSchema() {
     "reasoningEffort": null,
     "queriesNote": ""
   },
+  "story": "1-2 paragraf throughline emiten — koheren, tanpa dump angka",
+  "reasoningChain": ["langkah 1", "langkah 2", "langkah 3"],
   "plain": {
-    "whatHappened": "apa yang terjadi — bahasa orang",
-    "whyItMatters": "kenapa penting",
-    "whatToDo": "lakukan / skip / watch + syarat"
+    "whatHappened": "narasi — NO dump rvol/m1",
+    "whyItMatters": "",
+    "whatToDo": ""
   },
   "outlook": {
     "price": "cerah|biasa|suram",
@@ -62,7 +72,8 @@ export function deepDiveSchema() {
     "oneLiner": "",
     "business": "",
     "products": "",
-    "positioning": ""
+    "positioning": "",
+    "peers": ""
   },
   "financials": {
     "summary": "",
@@ -99,17 +110,28 @@ export function deepDiveSchema() {
 }
 
 /**
- * Seed hints only — agent should NOT treat as mandatory query list.
- * Used for FALLBACK hybrid path when native tools unavailable.
+ * Comprehensive seed queries for hybrid fallback + agent hints.
  */
 export function deepDiveQueries(ticker, day) {
   const t = String(ticker || "").toUpperCase().replace(/\.JK$/, "");
+  const d = day || "";
   return [
-    `${t} saham perusahaan profil bisnis`,
-    `${t} IDX aksi korporasi OR right issue OR buyback`,
-    `${t} berita ${day || ""}`.trim(),
-    `${t} risiko OR denda OR litigasi OR OJK`,
-    `${t} proyek OR kontrak OR ekspansi`
+    `${t} perusahaan profil bisnis sektor IDX`,
+    `${t} peer kompetitor sektor saham Indonesia`,
+    `${t} laporan keuangan OR laba OR revenue OR guidance OR EPS`,
+    `${t} laporan keuangan kuartal terbaru`,
+    `${t} dividen OR payout OR yield OR DPS`,
+    `${t} aksi korporasi OR right issue OR buyback OR private placement OR stock split`,
+    `${t} proyek OR kontrak OR ekspansi OR capex OR joint venture`,
+    `${t} berita ${d}`.trim(),
+    `${t} saham kenapa naik OR turun volume`,
+    `${t} risiko OR denda OR litigasi OR OJK OR BEI OR default`,
+    `${t} free float OR pemegang saham pengendali OR ultimated beneficial`,
+    `${t} outlook OR target harga OR analis OR rating`,
+    `${t} IDX disclosure OR keterbukaan informasi OR public expose`,
+    `${t} utang OR bond OR sukuk OR refinancing`,
+    `${t} sektor industri sentimen makro Indonesia`,
+    `${t} related party OR afiliasi OR transaksi material`
   ];
 }
 
@@ -133,13 +155,21 @@ function buildHardContextPayload(ticker, marketPack, memory) {
         }
       : null,
     memoryRecent: (memory || []).slice(0, 6),
+    searchCoverageChecklist: [
+      "profil + peer",
+      "lapkeu/guidance/dividen",
+      "aksi korporasi",
+      "proyek/kontrak",
+      "regulasi/litigasi",
+      "sentimen + makro sektor",
+      "berita sesi / kenapa gerak"
+    ],
     instruction: [
-      `Deep dive ${ticker}.`,
-      "1) Reason dari metrics/context: apa yang aneh/menarik (bahasa orang).",
-      "2) Search dinamis: bisnis, lapkeu, proyek, aksi korp, sentimen, makro sektor.",
-      "3) Isi plain + outlook cerah|biasa|suram (price vs funda vs combined).",
-      "4) Jangan mengarang angka lapkeu. unexplained jika kosong.",
-      "5) JSON deep_dive lengkap."
+      `Deep dive KOMPREHENSIF ${ticker}.`,
+      "Multi-round web_search: tutup checklist di atas.",
+      "Narasi story + reasoningChain; prose TANPA dump indikator (ada di UI JSON).",
+      "Jangan mengarang angka lapkeu. unexplained jika kosong.",
+      "JSON deep_dive lengkap."
     ].join(" ")
   };
 }
@@ -202,7 +232,7 @@ function finalizeReport(out, { ticker, marketPack, searchMode, runId, stock, age
   out.outlook.why = out.outlook.why || out.forecast?.thesis || priceH.why;
   if (!out.financials) out.financials = {};
   if (!out.financials.outlookTag) out.financials.outlookTag = out.outlook.fundamentals;
-  return out;
+  return attachIndicatorsToDeepDive(out, stock);
 }
 
 function errorReport({ ticker, marketPack, searchMode, runId, stock, err, searchResults }) {
@@ -259,13 +289,14 @@ export async function runDeepDiveAgent({
   ticker,
   marketPack,
   searchResults = [],
-  pageContents = [],
+  pageContents: _legacyPages = [],
   searchMode,
   memory,
   runId,
   signal,
   onLog
 }) {
+  void _legacyPages;
   // Research model default (any model — native+reasoning tried with cascade)
   let model = researchModel();
   try {
@@ -297,10 +328,25 @@ export async function runDeepDiveAgent({
       user: JSON.stringify(hard, null, 2),
       signal,
       onLog,
-      maxRounds: 3,
+      maxRounds: 7,
       unrestrictedWeb: true,
       temperature: null,
       reasoningEffort: "auto",
+      intermediateHint: `Deep dive HUNT KOMPREHENSIF multi-round. Tutup SEMUA bucket sebelum done:
+business, peer, financials (multi sumber), corp_action, project/capex, legal/OJK, free_float/ownership, sentiment, macro_sector, session_news.
+Jangan skim. Query spesifik. Hidden angle (related party, refinancing, peer pressure) diutamakan.
+Return JSON:
+{
+  "status": "continue|done",
+  "reasoning_brief": "hipotesis dari hard data + gap",
+  "queries_used": [],
+  "findings": [{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":"","bucket":"business|peer|financials|corp_action|project|legal|ownership|sentiment|macro|session"}],
+  "coverage": {"business":false,"peer":false,"financials":false,"corp_action":false,"project":false,"legal":false,"ownership":false,"sentiment":false,"macro":false,"session":false},
+  "gaps": [],
+  "next_queries": [],
+  "hiddenAngles": []
+}
+status=done hanya jika ≥7/10 coverage true ATAU residual gaps = unexplained eksplisit.`,
       finalSchemaHint: "Schema deep_dive (JSON):\n" + schema
     });
 
@@ -411,10 +457,11 @@ export async function runDeepDiveAgent({
     }
   }
 
-  // --- Path B: FALLBACK / DEGRADED / native failed — hybrid search (no page fetch) + chatJson ---
+  // --- Path B: FALLBACK / DEGRADED / native failed — comprehensive hybrid + optional page fetch ---
   let packResults = searchResults || [];
-  if (searchMode !== "DEGRADED" && packResults.length < 3) {
-    onLog?.("Deep dive fallback: Jina/news pack (tanpa page fetch)…");
+  let pageContents = [];
+  if (searchMode !== "DEGRADED" && packResults.length < 8) {
+    onLog?.("Deep dive hybrid: comprehensive seed queries + fetch pages…");
     try {
       const hybrid = await hybridResearchSearch({
         model,
@@ -423,37 +470,45 @@ export async function runDeepDiveAgent({
         signal,
         onLog,
         unrestrictedWeb: true,
-        fetchPages: false,
-        fetchLimit: 0
+        fetchPages: true,
+        fetchLimit: 8
       });
       packResults = [...packResults, ...(hybrid.results || [])];
+      pageContents = hybrid.pages || [];
+      onLog?.(
+        `Deep dive hybrid hits=${packResults.length} pages=${pageContents.length} layer=${hybrid.layer}`
+      );
     } catch (e) {
       onLog?.("Hybrid pack error: " + (e.message || e), "warn");
     }
   }
 
-  // void unused legacy
-  void pageContents;
-
   try {
-    onLog?.(`Deep dive synthesize chatJson · hits=${packResults.length}`);
+    onLog?.(
+      `Deep dive synthesize chatJson · hits=${packResults.length} pages=${pageContents.length}`
+    );
     const payload = {
       ...hard,
       searchMode,
-      searchResults: packResults.slice(0, 40),
+      searchResults: packResults.slice(0, 70),
+      pageContents: (pageContents || []).slice(0, 8).map((p) => ({
+        url: p.url || p.source || "",
+        title: p.title || "",
+        text: String(p.content || p.text || p.markdown || "").slice(0, 7000)
+      })),
       note:
         searchMode === "DEGRADED"
           ? "Tanpa web live. Jangan mengarang berita."
-          : "Pakai searchResults. Query generik hanya seed — prioritaskan klaim yang relevan data hard."
+          : "Hunt komprehensif: gabungkan searchResults + pageContents. Prose tanpa dump indikator. story + reasoningChain wajib."
     };
     const out = await chatJson({
       model: modelFor("analysis") || model,
       system,
       user:
         JSON.stringify(payload, null, 2) +
-        "\n\nTugas: deep dive " +
+        "\n\nTugas: deep dive komprehensif " +
         ticker +
-        ". Cari needle dari searchResults. Bahasa chat, tajam, bukan formal. Jangan kosongkan section tanpa unexplained.",
+        ". Narasi koheren + insight. Tutup seksi bisnis/lapkeu/aksi korp/proyek/risiko. unexplained jika kosong.",
       signal,
       temperature: null,
       reasoningEffort: "auto",

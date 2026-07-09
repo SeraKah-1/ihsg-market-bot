@@ -343,7 +343,9 @@ export function modelFor(role) {
   const m = appSettings.models || {};
   // new roles + legacy aliases
   if (role === "analysis") return m.analysis || m.judge || m.research || "gpt-4o-mini";
-  if (role === "verify") return m.verify || m.judge || m.analysis || m.research || "gpt-4o-mini";
+  if (role === "writer" || role === "verify") {
+    return m.writer || m.verify || m.judge || m.analysis || m.research || "gpt-4o-mini";
+  }
   if (role === "research" || role === "researcher") {
     return m.research || m.researcher || "gpt-4o-mini";
   }
