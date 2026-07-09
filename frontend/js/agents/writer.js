@@ -1,7 +1,6 @@
 /**
- * Writer / Presenter agent — pure narrative for HTML inject.
- * Does NOT re-hunt web. Does NOT dump indicators into prose.
- * Input: analysis pack (facts + verify notes). Output: presentation JSON.
+ * Writer / Presenter — narrative polish only.
+ * Slim payload (NOT full analysis dump) so the LLM request always fires.
  */
 import { chatJson, modelFor } from "../ai.js";
 import { writerSystem } from "./constitution.js";
@@ -13,43 +12,33 @@ import {
 import { applyStanceToBriefing } from "./stance-rules.js";
 import { attachIndicatorsToBriefing } from "../indicators-pack.js";
 
-/** Presentation-focused schema — injectable into HTML */
-export function writerSchema(runId, day, searchMode) {
-  return `{
-  "schemaVersion": 2,
-  "runId": "${runId}",
-  "asOfSession": "${day}",
-  "searchMode": "${searchMode}",
+/** Compact schema — short, not a 100-line template in the system prompt */
+const WRITER_SCHEMA_HINT = `{
   "presentation": {
-    "kicker": "1 baris kicker singkat",
-    "headline": "headline ngena 1 kalimat",
-    "lede": "2-4 kalimat pembuka — setup + ketegangan, TANPA dump angka",
-    "throughline": "1 paragraf cerita pasar yang koheren (setup → bukti → uang → keputusan)",
-    "punchline": "1 kalimat insight yang nempel",
+    "kicker": "string",
+    "headline": "string 1 kalimat",
+    "lede": "2-4 kalimat",
+    "throughline": "1 paragraf setup→uang→keputusan",
+    "punchline": "1 kalimat nempel",
     "sections": [
-      {"id":"setup","title":"Setup hari ini","body":"narasi 2-4 kalimat"},
-      {"id":"tension","title":"Yang aneh / tegang","body":""},
-      {"id":"money","title":"Uang ke mana","body":""},
-      {"id":"decision","title":"Keputusan","body":""},
-      {"id":"hidden","title":"Yang sering dilewat","body":"deep/hidden context dari analysis"}
+      {"id":"setup|tension|money|decision|hidden","title":"","body":""}
     ],
-    "checklist": ["aksi konkret esok"],
-    "closingNote": "1 kalimat penutup"
+    "checklist": ["aksi esok"],
+    "closingNote": ""
   },
   "sentiment": {
-    "analysisSummary": "punch insight (boleh rewrite dari analysis biar enak dibaca)",
-    "trapWatch": "jebakan — bahasa manusia",
-    "flowWatch": "uang hidup/mati — bahasa manusia",
+    "analysisSummary": "",
+    "trapWatch": "",
+    "flowWatch": "",
     "judgeLean": "fear|neutral|positive",
-    "judgeRationale": "kenapa lean — naratif, witty OK",
+    "judgeRationale": "",
     "judgePriority": "follow_money|avoid_exit_liq|mixed",
     "confidenceLabel": "uncalibrated"
   },
   "marketWide": {
-    "regimeTag": "",
-    "plainHeadline": "sama spirit headline",
-    "story": "sama spirit throughline",
-    "reasoningChain": ["langkah 1 yang enak dibaca", "langkah 2"],
+    "plainHeadline": "",
+    "story": "",
+    "reasoningChain": ["langkah"],
     "whatItMeans": "",
     "themes": [],
     "unexplained": [],
@@ -62,57 +51,28 @@ export function writerSchema(runId, day, searchMode) {
   },
   "shortlist": [{
     "ticker": "",
-    "insight": "1 kalimat yang nempel",
-    "narrative": "2-4 kalimat cerita emiten nyambung ke throughline pasar — NO dump rvol/m1/HH_HL",
-    "plain": {
-      "whatHappened": "",
-      "whyItMatters": "",
-      "whatToDo": ""
-    },
-    "fundamentals": {
-      "summary": "",
-      "outlookTag": "cerah|biasa|suram",
-      "outlookWhy": ""
-    },
-    "outlook": {
-      "price": "cerah|biasa|suram",
-      "fundamentals": "cerah|biasa|suram",
-      "combined": "cerah|biasa|suram",
-      "priceWhy": "",
-      "fundamentalsWhy": ""
-    },
-    "followMoney": {"flowAlive": true, "whoIsPushing": "", "fuelLeft": "unknown", "asymmetryNote": ""},
-    "stance": {
-      "aggressionAllowed": true,
-      "exitLiquidityRisk": "low|med|high",
-      "fomoThesis": "",
-      "invalidation": "",
-      "timeHorizon": "1-5d",
-      "judgePriority": "follow_money|avoid_exit_liq|mixed"
-    },
+    "insight": "",
+    "narrative": "",
+    "plain": {"whatHappened":"","whyItMatters":"","whatToDo":""},
+    "fundamentals": {"summary":"","outlookTag":"biasa","outlookWhy":""},
+    "outlook": {"price":"biasa","fundamentals":"biasa","combined":"biasa","priceWhy":"","fundamentalsWhy":""},
+    "followMoney": {"flowAlive":false,"whoIsPushing":"","fuelLeft":"unknown","asymmetryNote":""},
+    "stance": {"aggressionAllowed":false,"exitLiquidityRisk":"low|med|high","fomoThesis":"","invalidation":"","timeHorizon":"1-5d","judgePriority":"mixed"},
     "scenarios": {
-      "base": {"narrative":"","horizon":"1-5d","prob":0.5},
-      "bull": {"narrative":"","horizon":"1-5d","prob":0.25},
-      "bear": {"narrative":"","horizon":"1-5d","prob":0.25}
+      "base":{"narrative":"","horizon":"1-5d","prob":0.5},
+      "bull":{"narrative":"","horizon":"1-5d","prob":0.25},
+      "bear":{"narrative":"","horizon":"1-5d","prob":0.25}
     },
     "bestMoveFraming": "",
     "whySelected": []
   }],
-  "writerMeta": {
-    "note": "apa yang di-polish",
-    "fromAnalysis": true
-  },
-  "analysisMeta": null,
-  "memoryWrite": {
-    "compact": {"regimeTag":"","themes":[],"lean":"","top_tickers_1line":[]},
-    "openHypotheses": []
-  },
-  "disclaimer": "Bukan saran investasi. Keputusan akhir di user. Confidence uncalibrated."
+  "writerMeta": {"note":"","fromAnalysis":true},
+  "memoryWrite": {"compact":{"regimeTag":"","themes":[],"lean":"","top_tickers_1line":[]},"openHypotheses":[]},
+  "disclaimer": "Bukan saran investasi."
 }`;
-}
 
 /**
- * @returns presentation-ready briefing (metrics attached from code after)
+ * @returns presentation-ready briefing
  */
 export async function runWriter({
   shortlistPack,
@@ -124,95 +84,68 @@ export async function runWriter({
   onLog
 }) {
   const model = modelFor("writer");
-  onLog?.(`Writer model=${model} · presentasi & narasi · temp=omit`);
+  onLog?.(`Writer START model=${model} · presentasi (slim payload, no Firebase wait)`);
 
-  const schema = writerSchema(runId, shortlistPack.day, searchMode);
+  // Build SLIM user pack immediately — never wait on network for this
+  const slimUser = buildSlimWriterUser({
+    shortlistPack,
+    research,
+    analysis,
+    runId,
+    searchMode
+  });
+  const userStr = JSON.stringify(slimUser);
+  onLog?.(
+    `Writer payload ready · ~${Math.round(userStr.length / 1024)}KB · tickers=${(slimUser.tickers || []).length}`
+  );
 
   try {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
     const written = await chatJson({
       model,
       system:
         writerSystem() +
-        "\n\nKembalikan FULL JSON presentasi (schema di bawah)." +
-        "\nJANGAN salin metrics/rvol/z/HH_HL ke prose." +
-        "\nRewrite analysis jadi enak dibaca, koheren, saling nyambung." +
-        "\nPertahankan lean/priority/stance yang masuk akal dari analysis — boleh perjelas bahasa, jangan balik tesis tanpa alasan." +
-        "\nSchema:\n" +
-        schema,
-      user: JSON.stringify(
-        {
-          task: "Tulis ulang briefing agar enak dibaca. Input = Analysis dari Firebase memory bus.",
-          memoryBus: analysis?.memoryRef || { runId, step: "analysis" },
-          hardFactsNote:
-            "Angka harga/volume di shortlistHard — JANGAN dump ke teks. UI card = JSON terpisah.",
-          shortlistHard: (shortlistPack.shortlist || []).map((s) => ({
-            ticker: s.ticker,
-            whySelected: s.whySelected,
-            flowAlive: s.flowHints?.flowAlive,
-            exitLiquidityHint: s.flowHints?.exitLiquidityHint,
-            ret1dSign:
-              s.metrics?.changePct != null
-                ? s.metrics.changePct >= 0
-                  ? "hijau"
-                  : "merah"
-                : null,
-            rvolBand:
-              s.metrics?.rvol == null
-                ? null
-                : s.metrics.rvol >= 1.2
-                  ? "hidup"
-                  : s.metrics.rvol < 0.4
-                    ? "sepi"
-                    : "biasa"
-          })),
-          marketHard: {
-            day: shortlistPack.day,
-            regimeTag: shortlistPack.marketRegime?.tag,
-            regimeNote: shortlistPack.marketRegime?.note,
-            ihsgDirection:
-              shortlistPack.ihsg?.changePct != null
-                ? shortlistPack.ihsg.changePct >= 0
-                  ? "hijau"
-                  : "merah"
-                : null,
-            breadth: shortlistPack.breadth
-          },
-          researchPunch: {
-            macroNote: research?.macroNote,
-            hotTakes: (research?.hotTakes || []).slice(0, 6),
-            unexplainedMarket: (research?.unexplainedMarket || []).slice(0, 8)
-          },
-          analysisDraft: stripForWriter(analysis)
-        },
-        null,
-        2
-      ),
+        "\n\nROLE: WRITER — polish narasi. Jangan dump rvol/HH_HL/m1% ke prose." +
+        "\nPertahankan lean/priority dari analysis; perjelas bahasa." +
+        "\nIsi SEMUA ticker di shortlist." +
+        "\nSchema ringkas:\n" +
+        WRITER_SCHEMA_HINT,
+      user: userStr,
       signal,
       temperature: null,
-      reasoningEffort: "auto",
+      // medium first — faster than high cascade for pure prose
+      reasoningEffort: "medium",
+      timeoutMs: 90_000,
       onLog
     });
 
+    onLog?.("Writer LLM OK · merge ke analysis");
     let out = mergeWriterOntoAnalysis(analysis, written);
     out = stampBriefingMeta(out, shortlistPack, searchMode, runId);
     out = mergeSentimentShapes(out);
     out = applyStanceToBriefing(out);
     out = enrichBriefingForHumans(out, shortlistPack, research);
     out = attachIndicatorsToBriefing(out, shortlistPack);
-    out.writerMeta = written.writerMeta || { note: "written", fromAnalysis: true };
-    out.analysisMeta = analysis.analysisMeta || analysis.verify || null;
-    // keep analysis verify notes under analysisMeta; writer doesn't own verify
-    if (analysis.verify && !out.analysisMeta) out.analysisMeta = analysis.verify;
+    out.writerMeta = {
+      ...(written.writerMeta || {}),
+      note: written.writerMeta?.note || "written",
+      fromAnalysis: true,
+      mode: "llm"
+    };
+    out.analysisMeta = analysis?.analysisMeta || analysis?.verify || null;
+    if (analysis?.verify && !out.analysisMeta) out.analysisMeta = analysis.verify;
     onLog?.(
-      `Writer done · headline=${(out.presentation?.headline || out.marketWide?.plainHeadline || "").slice(0, 60)}`
+      `Writer done · headline=${(out.presentation?.headline || out.marketWide?.plainHeadline || "").slice(0, 72)}`
     );
     return out;
   } catch (e) {
-    onLog?.("Writer gagal — pakai analysis + polish heuristic: " + e.message, "err");
-    let out = { ...analysis };
+    if (e?.name === "AbortError") throw e;
+    onLog?.("Writer gagal — polish heuristic (analysis tetap dipakai): " + (e.message || e), "err");
+    let out = analysis && typeof analysis === "object" ? { ...analysis } : {};
     out.presentation = buildHeuristicPresentation(analysis, shortlistPack);
-    out.writerMeta = { note: "writer skip: " + e.message, fromAnalysis: true };
-    out.analysisMeta = analysis.analysisMeta || analysis.verify || null;
+    out.writerMeta = { note: "writer skip: " + (e.message || e), fromAnalysis: true, mode: "heuristic" };
+    out.analysisMeta = analysis?.analysisMeta || analysis?.verify || null;
     out = stampBriefingMeta(out, shortlistPack, searchMode, runId);
     out = mergeSentimentShapes(out);
     out = applyStanceToBriefing(out);
@@ -222,71 +155,160 @@ export async function runWriter({
   }
 }
 
-function stripForWriter(analysis) {
-  if (!analysis) return {};
+function buildSlimWriterUser({ shortlistPack, research, analysis, runId, searchMode }) {
+  const a = analysis || {};
+  const mw = a.marketWide || {};
+  const s = a.sentiment || {};
+  const meta = a.analysisMeta || a.verify || {};
+
   return {
-    sentiment: analysis.sentiment,
-    marketWide: analysis.marketWide,
-    analysisMeta: analysis.analysisMeta || analysis.verify,
-    verify: analysis.verify,
-    shortlist: (analysis.shortlist || []).map((r) => ({
-      ticker: r.ticker,
-      insight: r.insight,
-      plain: r.plain,
-      narrative: r.narrative,
-      fundamentals: r.fundamentals,
-      outlook: r.outlook,
-      stance: r.stance,
-      scenarios: r.scenarios,
-      bestMoveFraming: r.bestMoveFraming,
-      followMoney: r.followMoney,
-      whySelected: r.whySelected,
-      // no metrics/context/indicators in writer prompt
-      hiddenNotes: r.hiddenNotes,
-      crossChecks: r.crossChecks
-    })),
-    memoryWrite: analysis.memoryWrite,
-    disclaimer: analysis.disclaimer
+    task: "Tulis ulang briefing agar enak dibaca. Output JSON murni.",
+    runId,
+    searchMode,
+    day: shortlistPack?.day,
+    marketHard: {
+      regimeTag: shortlistPack?.marketRegime?.tag,
+      regimeNote: shortlistPack?.marketRegime?.note,
+      ihsgChangePct: shortlistPack?.ihsg?.changePct,
+      ihsgClose: shortlistPack?.ihsg?.close,
+      breadth: shortlistPack?.breadth
+    },
+    analysisLean: {
+      judgeLean: s.judgeLean,
+      judgePriority: s.judgePriority,
+      analysisSummary: clip(s.analysisSummary, 500),
+      trapWatch: clip(s.trapWatch, 400),
+      flowWatch: clip(s.flowWatch, 400),
+      judgeRationale: clip(s.judgeRationale, 500)
+    },
+    marketStory: {
+      plainHeadline: clip(mw.plainHeadline, 240),
+      story: clip(mw.story, 800),
+      whatItMeans: clip(mw.whatItMeans, 500),
+      bestMoveOverall: clip(mw.bestMoveOverall, 400),
+      followMoneyThesis: clip(mw.followMoneyThesis, 400),
+      themes: (mw.themes || []).slice(0, 8),
+      unexplained: (mw.unexplained || []).slice(0, 8),
+      reasoningChain: (mw.reasoningChain || []).slice(0, 6).map((x) => clip(x, 200)),
+      nextActions: (mw.nextActions || []).slice(0, 6),
+      crossTickerLinks: (mw.crossTickerLinks || []).slice(0, 6).map((x) =>
+        typeof x === "string" ? clip(x, 160) : clip(x?.note || JSON.stringify(x), 160)
+      ),
+      macroOutlook: mw.macroOutlook || null,
+      fundamentalsOutlook: mw.fundamentalsOutlook || null
+    },
+    verifyNotes: {
+      note: clip(meta.note, 300),
+      hiddenContext: (meta.hiddenContext || []).slice(0, 5).map((x) => clip(x, 200)),
+      missedByResearch: (meta.missedByResearch || []).slice(0, 5).map((x) => clip(x, 200)),
+      residualDoubts: (meta.residualDoubts || []).slice(0, 5).map((x) => clip(x, 200)),
+      crossChecks: (meta.crossChecks || []).slice(0, 6).map((c) => ({
+        claim: clip(c.claim, 120),
+        verdict: c.verdict,
+        note: clip(c.note, 120)
+      }))
+    },
+    researchPunch: {
+      macroNote: clip(research?.macroNote, 400),
+      hotTakes: (research?.hotTakes || []).slice(0, 5).map((x) => clip(x, 160)),
+      unexplainedMarket: (research?.unexplainedMarket || []).slice(0, 6).map((x) => clip(x, 160))
+    },
+    tickers: (shortlistPack?.shortlist || []).map((hard) => {
+      const row = (a.shortlist || []).find((r) => r.ticker === hard.ticker) || {};
+      return {
+        ticker: hard.ticker,
+        whySelected: hard.whySelected || row.whySelected || [],
+        tape: {
+          direction:
+            hard.metrics?.changePct == null
+              ? null
+              : hard.metrics.changePct >= 0
+                ? "hijau"
+                : "merah",
+          rvolBand:
+            hard.metrics?.rvol == null
+              ? null
+              : hard.metrics.rvol >= 1.2
+                ? "hidup"
+                : hard.metrics.rvol < 0.4
+                  ? "sepi"
+                  : "biasa",
+          structure: hard.context?.m1?.structure || hard.context?.w1?.structure || null,
+          volTrend: hard.context?.vol?.volumeTrend || null,
+          flowAlive: hard.flowHints?.flowAlive ?? row.followMoney?.flowAlive,
+          exitLiq: hard.flowHints?.exitLiquidityHint || row.stance?.exitLiquidityRisk
+        },
+        fromAnalysis: {
+          insight: clip(row.insight, 220),
+          plain: row.plain
+            ? {
+                whatHappened: clip(row.plain.whatHappened, 280),
+                whyItMatters: clip(row.plain.whyItMatters, 280),
+                whatToDo: clip(row.plain.whatToDo, 220)
+              }
+            : null,
+          narrative: clip(row.narrative, 360),
+          outlook: row.outlook || null,
+          bestMoveFraming: clip(row.bestMoveFraming, 200),
+          stance: row.stance
+            ? {
+                aggressionAllowed: row.stance.aggressionAllowed,
+                exitLiquidityRisk: row.stance.exitLiquidityRisk,
+                invalidation: clip(row.stance.invalidation, 160),
+                fomoThesis: clip(row.stance.fomoThesis, 160),
+                judgePriority: row.stance.judgePriority
+              }
+            : null,
+          fundamentals: row.fundamentals
+            ? {
+                summary: clip(row.fundamentals.summary, 240),
+                outlookTag: row.fundamentals.outlookTag
+              }
+            : null
+        }
+      };
+    })
   };
 }
 
+function clip(s, n) {
+  if (s == null) return s;
+  const t = String(s);
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+
 function mergeWriterOntoAnalysis(analysis, written) {
-  if (!written || typeof written !== "object") return analysis;
+  if (!written || typeof written !== "object") return analysis || {};
+  const base = analysis && typeof analysis === "object" ? analysis : {};
   const out = {
-    ...analysis,
+    ...base,
     ...written,
-    presentation: written.presentation || analysis.presentation,
-    sentiment: { ...(analysis.sentiment || {}), ...(written.sentiment || {}) },
-    marketWide: { ...(analysis.marketWide || {}), ...(written.marketWide || {}) },
-    memoryWrite: written.memoryWrite || analysis.memoryWrite
+    presentation: written.presentation || base.presentation,
+    sentiment: { ...(base.sentiment || {}), ...(written.sentiment || {}) },
+    marketWide: { ...(base.marketWide || {}), ...(written.marketWide || {}) },
+    memoryWrite: written.memoryWrite || base.memoryWrite
   };
 
-  const byT = Object.fromEntries(
-    (analysis.shortlist || []).map((r) => [r.ticker, r])
-  );
+  const byT = Object.fromEntries((base.shortlist || []).map((r) => [r.ticker, r]));
   if (Array.isArray(written.shortlist) && written.shortlist.length) {
     out.shortlist = written.shortlist.map((row) => {
       const o = byT[row.ticker] || {};
       return {
         ...o,
         ...row,
-        // code-owned hard fields always win
         metrics: o.metrics,
         context: o.context,
         vsIhsg: o.vsIhsg,
         flowHints: o.flowHints || row.flowHints,
         whySelected: o.whySelected || row.whySelected,
-        indicators: undefined // re-attached later
+        indicators: undefined
       };
     });
-    // keep any analysis tickers writer dropped
-    for (const o of analysis.shortlist || []) {
-      if (!out.shortlist.find((x) => x.ticker === o.ticker)) {
-        out.shortlist.push(o);
-      }
+    for (const o of base.shortlist || []) {
+      if (!out.shortlist.find((x) => x.ticker === o.ticker)) out.shortlist.push(o);
     }
   } else {
-    out.shortlist = analysis.shortlist;
+    out.shortlist = base.shortlist;
   }
   return out;
 }
@@ -296,21 +318,30 @@ function buildHeuristicPresentation(analysis, pack) {
   const s = analysis?.sentiment || {};
   return {
     kicker: "Market briefing",
-    headline: mw.plainHeadline || s.analysisSummary || "Briefing IHSG",
+    headline: mw.plainHeadline || s.analysisSummary || `IHSG · ${pack?.day || ""}`,
     lede: s.analysisSummary || mw.whatItMeans || "",
     throughline: mw.story || mw.followMoneyThesis || s.judgeRationale || "",
     punchline: s.analysisSummary || mw.bestMoveOverall || "",
     sections: [
       { id: "setup", title: "Setup hari ini", body: mw.plainHeadline || "" },
-      { id: "tension", title: "Yang aneh / tegang", body: (mw.unexplained || []).join("; ") },
-      { id: "money", title: "Uang ke mana", body: mw.followMoneyThesis || s.flowWatch || "" },
+      {
+        id: "tension",
+        title: "Yang aneh / tegang",
+        body: (mw.unexplained || []).join("; ")
+      },
+      {
+        id: "money",
+        title: "Uang ke mana",
+        body: mw.followMoneyThesis || s.flowWatch || ""
+      },
       { id: "decision", title: "Keputusan", body: mw.bestMoveOverall || "" },
       {
         id: "hidden",
         title: "Yang sering dilewat",
-        body: (analysis?.analysisMeta?.hiddenContext || analysis?.verify?.residualDoubts || []).join(
-          "; "
-        ) || "—"
+        body:
+          (analysis?.analysisMeta?.hiddenContext || analysis?.verify?.residualDoubts || []).join(
+            "; "
+          ) || "—"
       }
     ],
     checklist: mw.nextActions || [],
@@ -318,7 +349,7 @@ function buildHeuristicPresentation(analysis, pack) {
   };
 }
 
-/** Legacy alias if anything still imports verify */
+/** Legacy alias */
 export async function runVerify(opts) {
   return runWriter({
     ...opts,

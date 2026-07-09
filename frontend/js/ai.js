@@ -201,6 +201,37 @@ function isTransientNetworkError(e) {
   );
 }
 
+/**
+ * Abortable timeout that does NOT abort the parent signal permanently.
+ * Parent abort still cancels the request.
+ */
+function withTimeoutSignal(parentSignal, ms) {
+  const ctrl = new AbortController();
+  const onParent = () => ctrl.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) ctrl.abort();
+    else parentSignal.addEventListener("abort", onParent, { once: true });
+  }
+  const timer =
+    ms > 0
+      ? setTimeout(() => {
+          try {
+            ctrl.abort();
+          } catch {
+            /* */
+          }
+        }, ms)
+      : null;
+  return {
+    signal: ctrl.signal,
+    cleanup() {
+      if (timer) clearTimeout(timer);
+      if (parentSignal) parentSignal.removeEventListener("abort", onParent);
+    },
+    timedOut: () => ms > 0 && ctrl.signal.aborted && !parentSignal?.aborted
+  };
+}
+
 async function chatCompleteOnce({
   model,
   messages,
@@ -208,7 +239,9 @@ async function chatCompleteOnce({
   signal = null,
   temperature: _temperature = null,
   reasoningEffort = null,
-  retries = 2
+  retries = 2,
+  timeoutMs = 120_000,
+  onLog = null
 }) {
   void _temperature; // product: never send temperature
   const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
@@ -216,25 +249,35 @@ async function chatCompleteOnce({
   if (useProxy) targetUrl = getProxyUrl(targetUrl);
 
   // Cap payload — huge messages often kill proxy mid-flight → Failed to fetch
+  // Writer path especially needs tighter caps so request actually leaves the browser
+  const maxMsg = 48_000;
   const bodyMessages = messages.map((m) => ({
     role: m.role,
     content:
-      typeof m.content === "string" && m.content.length > 100_000
-        ? m.content.slice(0, 100_000) + "\n…[truncated for transport]"
+      typeof m.content === "string" && m.content.length > maxMsg
+        ? m.content.slice(0, maxMsg) + "\n…[truncated for transport]"
         : m.content
   }));
+
+  const approxBytes = JSON.stringify(bodyMessages).length;
+  onLog?.(
+    `LLM request → ${model} · ~${Math.round(approxBytes / 1024)}KB · reason=${reasoningEffort || "off"} · timeout=${timeoutMs}ms`
+  );
 
   const body = {
     model,
     messages: bodyMessages,
     stream: false
   };
+  // Prefer json_object; some routers reject it — cascade drops on 400
   if (isJson) body.response_format = { type: "json_object" };
   if (reasoningEffort) injectReasoningParams(body, model, reasoningEffort);
 
   let lastErr = null;
+  let dropJsonFormatTried = false;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const to = withTimeoutSignal(signal, timeoutMs);
     try {
       const res = await fetch(targetUrl, {
         method: "POST",
@@ -245,17 +288,35 @@ async function chatCompleteOnce({
           "X-Title": "IHSG Market Bot"
         },
         body: JSON.stringify(body),
-        signal
+        signal: to.signal
       });
+      to.cleanup();
 
       if (!res.ok) {
         const t = await res.text();
+        // drop response_format if router hates it
+        if (
+          isJson &&
+          body.response_format &&
+          !dropJsonFormatTried &&
+          /response_format|json_object|unsupported|unknown/i.test(t) &&
+          (res.status === 400 || res.status === 422)
+        ) {
+          delete body.response_format;
+          dropJsonFormatTried = true;
+          onLog?.("response_format ditolak → retry tanpa json_object");
+          attempt -= 1; // one free retry for format only
+          continue;
+        }
         throw new Error(`LLM ${res.status}: ${t.slice(0, 400)}`);
       }
 
       const data = await res.json();
       let content = data.choices?.[0]?.message?.content || "";
       if (isJson) content = extractJson(content);
+      onLog?.(
+        `LLM OK · ${model} · content≈${String(content || "").length} chars`
+      );
       return {
         content,
         raw: data,
@@ -266,9 +327,20 @@ async function chatCompleteOnce({
         reasoningEffort: reasoningEffort || null
       };
     } catch (e) {
+      to.cleanup();
       lastErr = e;
       if (signal?.aborted) throw e;
+      if (to.timedOut()) {
+        lastErr = new Error(`LLM timeout ${timeoutMs}ms model=${model}`);
+        onLog?.(String(lastErr.message), "err");
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          continue;
+        }
+        throw lastErr;
+      }
       if (isTransientNetworkError(e) && attempt < retries) {
+        onLog?.(`LLM network retry ${attempt + 1}: ${String(e.message || e).slice(0, 80)}`, "warn");
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
         continue;
       }
@@ -288,10 +360,12 @@ export async function chatComplete({
   signal = null,
   temperature: _temperature = null,
   reasoningEffort = "auto",
-  onLog = null
+  onLog = null,
+  timeoutMs = 120_000
 }) {
   void _temperature;
   const preferred = preferredReasoningEffort(model, reasoningEffort);
+  // Writer / light roles often pass "medium" — still cascade down if rejected
   const efforts = reasoningEffortCascade(preferred ?? "high");
   let lastErr = null;
 
@@ -306,7 +380,9 @@ export async function chatComplete({
         isJson,
         signal,
         temperature: null,
-        reasoningEffort: effort
+        reasoningEffort: effort,
+        timeoutMs,
+        onLog
       });
     } catch (e) {
       lastErr = e;
@@ -331,17 +407,30 @@ export async function chatJson({
   signal,
   temperature: _temperature = null,
   reasoningEffort = "auto",
-  onLog = null
+  onLog = null,
+  timeoutMs = 120_000
 }) {
   void _temperature;
+  // Harden sizes before network — main Writer bottleneck was huge system+user
+  const sys =
+    typeof system === "string" && system.length > 28_000
+      ? system.slice(0, 28_000) + "\n…[system truncated]"
+      : system;
+  const usr =
+    typeof user === "string" && user.length > 40_000
+      ? user.slice(0, 40_000) + "\n…[user truncated]"
+      : user;
+  onLog?.(
+    `chatJson start · sys≈${String(sys || "").length} user≈${String(usr || "").length}`
+  );
   const messages = [
     {
       role: "system",
       content:
-        system +
+        sys +
         "\n\nOutput HARUS JSON valid murni. Tanpa markdown fence, tanpa prosa di luar JSON."
     },
-    { role: "user", content: user }
+    { role: "user", content: usr }
   ];
   const { content, reasoningEffort: used } = await chatComplete({
     model,
@@ -350,7 +439,8 @@ export async function chatJson({
     signal,
     temperature: null,
     reasoningEffort,
-    onLog
+    onLog,
+    timeoutMs
   });
   // Prefer loose parse first (handles fence / html prefix)
   let parsed = parseJsonLoose(content);

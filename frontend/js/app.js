@@ -355,6 +355,16 @@ function init() {
   $("btn-dl-json")?.addEventListener("click", () => downloadJson());
   $("btn-dl-html")?.addEventListener("click", () => downloadHtml());
 
+  // In-report export buttons (event delegation)
+  document.getElementById("report-view")?.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-export]");
+    if (!btn) return;
+    e.preventDefault();
+    const kind = btn.getAttribute("data-export");
+    if (kind === "html") downloadHtml();
+    else if (kind === "json") downloadJson();
+  });
+
   const doResume = () =>
     withBusy(["btn-run", "btn-run-m", "btn-resume", "btn-resume-m", "btn-resume-banner"], async () => {
       if (!pendingResumeRunId) {

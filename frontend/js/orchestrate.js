@@ -242,11 +242,12 @@ export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
         runId
       });
       research.memoryRef = { runId, step: "research" };
-      await saveAgentStep(runId, "research", research, logLine);
+      await saveAgentStep(runId, "research", research, logLine, { awaitRemote: false });
       logLine(
-        `Research done mode=${research.agentMeta?.mode || "?"} findings=${(research.findings || []).length} → saved`
+        `Research done mode=${research.agentMeta?.mode || "?"} findings=${(research.findings || []).length} → local saved`
       );
-      researchFromMem = (await loadAgentStep(runId, "research", logLine)) || research;
+      // in-memory first — avoid Firebase round-trip bottleneck
+      researchFromMem = research;
     } else {
       researchFromMem = await loadAgentStep(runId, "research", logLine);
       if (!researchFromMem) throw new Error("Resume: research pack hilang");
@@ -267,20 +268,26 @@ export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
         onLog: logLine
       });
       analysis.memoryRef = { runId, step: "analysis" };
-      await saveAgentStep(runId, "analysis", analysis, logLine);
+      // Local save only — do NOT await Firebase (was blocking Writer)
+      await saveAgentStep(runId, "analysis", analysis, logLine, { awaitRemote: false });
       logLine(
-        `Analysis done lean=${analysis.sentiment?.judgeLean || "?"} → saved`
+        `Analysis done lean=${analysis.sentiment?.judgeLean || "?"} → local saved → Writer (no remote wait)`
       );
-      analysisFromMem = (await loadAgentStep(runId, "analysis", logLine)) || analysis;
+      // CRITICAL: use in-memory analysis, never re-load from Firebase before Writer
+      analysisFromMem = analysis;
     } else {
       analysisFromMem = await loadAgentStep(runId, "analysis", logLine);
       if (!analysisFromMem) throw new Error("Resume: analysis pack hilang");
       logLine("Resume: skip Analysis (pakai memory)");
     }
     analysisForWriter = compactAnalysisForDownstream(analysisFromMem);
+    logLine(
+      `Writer handoff ready · compact≈${Math.round(JSON.stringify(analysisForWriter).length / 1024)}KB`
+    );
 
-    // 3) Writer
+    // 3) Writer — must fire LLM request immediately
     setStatus("Writer…", "busy");
+    logLine("→ Writer agent starting (chat/completions)");
     let briefing = await runWriter({
       shortlistPack,
       research: researchForAnalysis,
@@ -291,15 +298,15 @@ export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
       onLog: logLine
     });
     briefing.researchPack = {
-      hotTakes: researchFromMem.hotTakes,
-      macroNote: researchFromMem.macroNote,
-      searchPlan: researchFromMem.searchPlan,
-      agentMeta: researchFromMem.agentMeta
+      hotTakes: researchFromMem?.hotTakes,
+      macroNote: researchFromMem?.macroNote,
+      searchPlan: researchFromMem?.searchPlan,
+      agentMeta: researchFromMem?.agentMeta
     };
     briefing.pipeline = "research→analysis→writer";
     briefing.runId = runId;
     briefing.memoryBus = { runId, db: "market", path: `users/{uid}/ihsg_runs/${runId}` };
-    await saveAgentStep(runId, "writer", briefing, logLine);
+    await saveAgentStep(runId, "writer", briefing, logLine, { awaitRemote: false });
 
     // final run + compact memory
     try {
@@ -698,17 +705,39 @@ export function downloadJson() {
   a.click();
 }
 
+/**
+ * Export last report as standalone HTML file (styles + fonts inlined/linked).
+ */
 export function downloadHtml() {
   const b = window.__lastBriefing;
-  if (!b) return alert("Belum ada briefing");
-  const full = buildExportHtml(b);
-  const blob = new Blob([full], { type: "text/html;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  const name =
-    b.kind === "deep_dive"
-      ? `deep-${b.ticker || "emiten"}-${b.asOfSession || "run"}.html`
-      : `briefing-${b.asOfSession || "run"}.html`;
-  a.download = name;
-  a.click();
+  if (!b) {
+    alert("Belum ada briefing / deep dive untuk di-export.");
+    return;
+  }
+  try {
+    const full = buildExportHtml(b);
+    const blob = new Blob([full], { type: "text/html;charset=utf-8" });
+    const a = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    const name =
+      b.kind === "deep_dive"
+        ? `ihsg-deep-${b.ticker || "emiten"}-${b.asOfSession || stamp}.html`
+        : `ihsg-briefing-${b.asOfSession || stamp}.html`;
+    a.download = name;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      a.remove();
+    }, 1500);
+    logLine(`Export HTML → ${name}`);
+    setStatus(`Exported ${name}`, "ok");
+  } catch (e) {
+    console.error(e);
+    alert("Export HTML gagal: " + (e.message || e));
+    logLine("Export HTML gagal: " + (e.message || e), "err");
+  }
 }

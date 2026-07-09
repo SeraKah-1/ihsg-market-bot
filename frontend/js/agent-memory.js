@@ -140,19 +140,89 @@ export function compactResearchForDownstream(research) {
 }
 
 /**
- * Analysis pack slim for Writer.
+ * Analysis pack slim for Writer — aggressive strip so Writer always fires a request.
+ * Indicators / raw dumps stay out; Writer only needs narrative skeleton.
  */
 export function compactAnalysisForDownstream(analysis) {
   if (!analysis) return {};
-  const c = compactForMemory(analysis, 120_000);
-  if (c?.indicators) {
-    // writer must not dump numbers — keep only lean flags
-    c.indicators = {
-      _note: "indikator full di Firebase agents/analysis + code attach di UI",
-      marketRegime: c.indicators?.market?.regime || null
+  try {
+    return {
+      schemaVersion: analysis.schemaVersion,
+      runId: analysis.runId,
+      asOfSession: analysis.asOfSession,
+      searchMode: analysis.searchMode,
+      sentiment: analysis.sentiment || {},
+      marketWide: {
+        regimeTag: analysis.marketWide?.regimeTag,
+        plainHeadline: analysis.marketWide?.plainHeadline,
+        story: analysis.marketWide?.story,
+        reasoningChain: (analysis.marketWide?.reasoningChain || []).slice(0, 8),
+        whatItMeans: analysis.marketWide?.whatItMeans,
+        themes: (analysis.marketWide?.themes || []).slice(0, 10),
+        unexplained: (analysis.marketWide?.unexplained || []).slice(0, 10),
+        bestMoveOverall: analysis.marketWide?.bestMoveOverall,
+        followMoneyThesis: analysis.marketWide?.followMoneyThesis,
+        nextActions: (analysis.marketWide?.nextActions || []).slice(0, 8),
+        crossTickerLinks: (analysis.marketWide?.crossTickerLinks || []).slice(0, 8),
+        macroOutlook: analysis.marketWide?.macroOutlook,
+        fundamentalsOutlook: analysis.marketWide?.fundamentalsOutlook
+      },
+      shortlist: (analysis.shortlist || []).map((r) => ({
+        ticker: r.ticker,
+        insight: r.insight,
+        narrative: r.narrative,
+        plain: r.plain,
+        fundamentals: r.fundamentals,
+        outlook: r.outlook,
+        stance: r.stance,
+        scenarios: r.scenarios,
+        bestMoveFraming: r.bestMoveFraming,
+        followMoney: r.followMoney,
+        whySelected: r.whySelected,
+        hiddenNotes: r.hiddenNotes,
+        // keep hard refs tiny if present (writer prefers shortlistPack for metrics)
+        metrics: r.metrics
+          ? {
+              changePct: r.metrics.changePct,
+              rvol: r.metrics.rvol,
+              zRet: r.metrics.zRet
+            }
+          : undefined,
+        flowHints: r.flowHints
+      })),
+      analysisMeta: {
+        note: analysis.analysisMeta?.note || analysis.verify?.note,
+        crossChecks: (analysis.analysisMeta?.crossChecks || []).slice(0, 10),
+        hiddenContext: (analysis.analysisMeta?.hiddenContext || []).slice(0, 8),
+        missedByResearch: (analysis.analysisMeta?.missedByResearch || []).slice(0, 8),
+        residualDoubts: (analysis.analysisMeta?.residualDoubts || []).slice(0, 8)
+      },
+      verify: analysis.verify
+        ? {
+            note: analysis.verify.note,
+            residualDoubts: (analysis.verify.residualDoubts || []).slice(0, 6)
+          }
+        : undefined,
+      memoryWrite: analysis.memoryWrite,
+      disclaimer: analysis.disclaimer,
+      // never pass indicators blob to writer
+      indicators: undefined
     };
+  } catch {
+    return compactForMemory(analysis, 40_000);
   }
-  return c;
+}
+
+/** Promise race with timeout — never block pipeline forever on Firebase */
+export function withTimeout(promise, ms, label = "op") {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timeout ${ms}ms`)),
+      ms
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function localSaveRun(runId, patch) {
@@ -261,17 +331,32 @@ export async function startRunMemory(runId, meta = {}, onLog) {
 }
 
 /**
- * Save one agent step. Next agent should loadAgentStep(runId, step).
+ * Save one agent step. Local/IDB first (fast); Firebase/server non-blocking with timeout.
+ * Critical: Writer must NOT wait on Firebase after Analysis.
  * @param {string} step research | analysis | writer | shortlist | deep_dive
+ * @param {{ awaitRemote?: boolean, remoteTimeoutMs?: number }} opts
  */
-export async function saveAgentStep(runId, step, payload, onLog) {
-  const data = compactForMemory(payload);
+export async function saveAgentStep(runId, step, payload, onLog, opts = {}) {
+  const awaitRemote = opts.awaitRemote === true; // default: fire-and-forget remote
+  const remoteTimeoutMs = opts.remoteTimeoutMs ?? 4_000;
+
+  // Strip heavy indicators before any store (re-attached from shortlistPack later)
+  let toSave = payload;
+  if (payload && typeof payload === "object" && payload.indicators) {
+    try {
+      toSave = { ...payload, indicators: { _stripped: true, note: "re-attach from code" } };
+    } catch {
+      toSave = payload;
+    }
+  }
+  const data = compactForMemory(toSave, step === "writer" ? 160_000 : 80_000);
   const entry = {
     step,
     savedAt: Date.now(),
     payload: data
   };
 
+  // 1) Local first — always sync, never blocks network
   localSaveRun(runId, {
     [step]: entry,
     [`${step}At`]: Date.now(),
@@ -285,36 +370,33 @@ export async function saveAgentStep(runId, step, payload, onLog) {
     onLog?.(`IDB save [${step}]: ${e.message}`, "warn");
   }
 
-  // server mirror (always try when online)
-  try {
-    await fetch("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId,
-        agentStep: step,
-        savedAt: entry.savedAt,
-        payload: data
-      })
-    });
-  } catch (e) {
-    /* offline ok */
-  }
+  onLog?.(`Memory save [${step}] local OK · remote background`);
 
-  if (!currentUser?.uid) {
+  const remoteJob = async () => {
     try {
-      await ensureAuth();
+      await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId,
+          agentStep: step,
+          savedAt: entry.savedAt,
+          payload: data
+        })
+      });
     } catch {
-      /* */
+      /* offline ok */
     }
-  }
 
-  if (!currentUser?.uid) {
-    onLog?.(`Memory save [${step}] → offline IDB (+ /api if online)`);
-    return { backend: "local", step, runId };
-  }
+    if (!currentUser?.uid) {
+      try {
+        await ensureAuth();
+      } catch {
+        /* */
+      }
+    }
+    if (!currentUser?.uid) return { backend: "local", step, runId };
 
-  try {
     await setDoc(
       agentStepDoc(runId, step),
       {
@@ -333,10 +415,20 @@ export async function saveAgentStep(runId, step, payload, onLog) {
     }).catch(() => {});
     onLog?.(`Firebase save agent=${step} · runs/${runId}/agents/${step}`);
     return { backend: "firebase", step, runId };
-  } catch (e) {
-    onLog?.(`Firebase save [${step}] gagal → offline: ${e.message}`, "warn");
-    return { backend: "local", step, runId, error: e.message };
+  };
+
+  if (awaitRemote) {
+    try {
+      return await withTimeout(remoteJob(), remoteTimeoutMs, `save[${step}]`);
+    } catch (e) {
+      onLog?.(`Remote save [${step}] skip: ${e.message}`, "warn");
+      return { backend: "local", step, runId, error: e.message };
+    }
   }
+
+  // fire-and-forget — pipeline continues to next agent immediately
+  remoteJob().catch((e) => onLog?.(`Remote save [${step}] bg: ${e.message}`, "warn"));
+  return { backend: "local+bg", step, runId };
 }
 
 /**

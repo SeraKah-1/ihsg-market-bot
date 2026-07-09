@@ -77,26 +77,33 @@ export function renderBriefingHtml(b) {
   return `
 <div class="rpt ${isDark() ? "rpt-dark" : ""}">
 <div class="rpt-wrap">
-  <header class="rpt-head">
-    <p class="rpt-kicker">${esc(pres.kicker || "Market briefing · narasi · indikator di kartu JSON")}</p>
-    <h1>IHSG · ${esc(b.asOfSession || "")}</h1>
+  <header class="rpt-hero">
+    <p class="rpt-kicker">${esc(pres.kicker || "IHSG briefing")}</p>
+    <p class="rpt-hero-title">${esc(headline || `IHSG · ${b.asOfSession || ""}`)}</p>
+    ${lede ? `<p class="rpt-lede-hero">${esc(lede)}</p>` : ""}
     <div class="rpt-badges">
       <span class="rpt-badge ${leanCls}">Bias ${esc(leanId(lean))}</span>
       <span class="rpt-badge ${priority === "avoid_exit_liq" ? "down" : priority === "follow_money" ? "up" : "neutral"}">${esc(priorityId(priority))}</span>
-      <span class="rpt-badge ${outlookBadgeClass(macroTag)}">${esc(outlookLabel(macroTag))} (makro/tape)</span>
+      <span class="rpt-badge ${outlookBadgeClass(macroTag)}">${esc(outlookLabel(macroTag))} makro</span>
       ${fundTag ? `<span class="rpt-badge ${outlookBadgeClass(fundTag)}">Funda ${esc(outlookLabel(fundTag))}</span>` : ""}
-      <span class="rpt-badge neutral">${esc(regime.tag || "—")}</span>
+      <span class="rpt-badge accent">${esc(regime.tag || "—")}</span>
     </div>
-    <p class="rpt-meta">IHSG <span class="rpt-mono">${fmtNum(ihsg.close)}</span>
+    <p class="rpt-meta">
+      <span class="rpt-mono">${esc(b.asOfSession || "—")}</span>
+      · IHSG <span class="rpt-mono">${fmtNum(ihsg.close)}</span>
       · <span class="rpt-mono ${clsSign(ihsg.changePct)}">${signed(ihsg.changePct)}%</span>
-      · coverage ${fmt(b.dataQuality?.coveragePct)}%</p>
+      · coverage ${fmt(b.dataQuality?.coveragePct)}%
+      ${b.writerMeta?.mode ? ` · writer ${esc(b.writerMeta.mode)}` : ""}
+    </p>
+    <div class="rpt-export-bar">
+      <button type="button" class="rpt-export-btn primary" data-export="html">Export HTML</button>
+      <button type="button" class="rpt-export-btn" data-export="json">Export JSON</button>
+    </div>
   </header>
 
   <details class="rpt-section" open>
     <summary>Cerita &amp; keputusan</summary>
     <div class="rpt-body">
-      <p class="rpt-lead">${esc(headline)}</p>
-      ${lede ? `<p class="rpt-lede">${esc(lede)}</p>` : ""}
       ${throughline ? `<p class="rpt-story">${esc(throughline)}</p>` : ""}
       ${punchline ? `<p class="rpt-insight">${esc(punchline)}</p>` : ""}
       ${
@@ -157,15 +164,15 @@ export function renderBriefingHtml(b) {
     </div>
   </details>
 
-  <details class="rpt-section" open>
-    <summary>Indikator pasar (JSON · terpisah dari narasi)</summary>
+  <details class="rpt-section">
+    <summary>Indikator pasar (JSON)</summary>
     <div class="rpt-body">
       ${indicatorsPanel("IHSG · breadth · regime", marketInd, chipsFromMarketPack(marketInd), true)}
     </div>
   </details>
 
   <details class="rpt-section" open>
-    <summary>Analysis · crosscheck &amp; hidden</summary>
+    <summary>Analysis · crosscheck</summary>
     <div class="rpt-body">
       <div class="rpt-panel" style="margin-bottom:.75rem">
         <h4>Punch</h4>
@@ -194,7 +201,7 @@ export function renderBriefingHtml(b) {
   </details>
 
   <details class="rpt-section">
-    <summary>Globals (konteks luar)</summary>
+    <summary>Globals</summary>
     <div class="rpt-body">
       <table class="rpt-table">
         <thead><tr><th>Indeks</th><th>1 hari</th><th>Arti singkat</th></tr></thead>
@@ -214,7 +221,7 @@ export function renderBriefingHtml(b) {
   </details>
 
   <details class="rpt-section" open>
-    <summary>Shortlist · narasi (${(b.shortlist || []).length})</summary>
+    <summary>Shortlist · ${(b.shortlist || []).length} emiten</summary>
     <div class="rpt-body">
       ${cards || `<p class="rpt-muted">Kosong</p>`}
     </div>
@@ -227,7 +234,7 @@ export function renderBriefingHtml(b) {
 
   <footer class="rpt-footer">
     <p>${esc(b.disclaimer || "Bukan saran investasi. Keputusan akhir di user.")}</p>
-    <p>Pipeline: Research → Analysis(verify) → Writer · indikator = JSON card · prose = narasi</p>
+    <p>Research → Analysis → Writer · narasi terpisah dari indikator JSON</p>
   </footer>
 </div>
 </div>`;
@@ -267,17 +274,22 @@ export function renderDeepDiveHtml(d) {
   return `
 <div class="rpt ${isDark() ? "rpt-dark" : ""}">
 <div class="rpt-wrap">
-  <header class="rpt-head">
-    <p class="rpt-kicker">Deep dive · narasi dulu · indikator JSON</p>
-    <h1>${esc(d.ticker || "")} · ${esc(c.name || "—")}</h1>
+  <header class="rpt-hero">
+    <p class="rpt-kicker">Deep dive · ${esc(d.ticker || "")}</p>
+    <p class="rpt-hero-title">${esc(d.ticker || "")}${c.name ? ` · ${esc(c.name)}` : ""}</p>
+    ${c.oneLiner ? `<p class="rpt-lede-hero">${esc(c.oneLiner)}</p>` : ""}
     <div class="rpt-badges">
       <span class="rpt-badge neutral">${esc(c.sector || "sektor?")}</span>
-      <span class="rpt-badge ${outlookBadgeClass(combTag)}">${esc(outlookLabel(combTag))} (gabungan)</span>
+      <span class="rpt-badge ${outlookBadgeClass(combTag)}">${esc(outlookLabel(combTag))} gabungan</span>
       <span class="rpt-badge ${outlookBadgeClass(priceTag)}">Tape ${esc(outlookLabel(priceTag))}</span>
       <span class="rpt-badge ${outlookBadgeClass(fundTag)}">Lapkeu ${esc(outlookLabel(fundTag))}</span>
       <span class="rpt-badge ${fc.lean === "positive" ? "up" : fc.lean === "fear" ? "down" : "neutral"}">Lean ${esc(fc.lean || "—")}</span>
     </div>
-    <p class="rpt-meta">${esc(c.oneLiner || "")}</p>
+    <p class="rpt-meta"><span class="rpt-mono">${esc(d.asOfSession || d.day || "—")}</span></p>
+    <div class="rpt-export-bar">
+      <button type="button" class="rpt-export-btn primary" data-export="html">Export HTML</button>
+      <button type="button" class="rpt-export-btn" data-export="json">Export JSON</button>
+    </div>
   </header>
 
   <details class="rpt-section" open>
