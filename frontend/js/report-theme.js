@@ -348,6 +348,162 @@ html.dark-mode .rpt,
 .rpt-card-metrics .up { color: var(--r-up) !important; font-weight: 600 !important; }
 .rpt-card-metrics .down { color: var(--r-down) !important; font-weight: 600 !important; }
 
+/* Metric tiles — each number separated, labeled, colored */
+.rpt-metrics {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 0.55rem !important;
+  margin: 0.85rem 0 0 !important;
+}
+@media (min-width: 560px) {
+  .rpt-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+}
+@media (min-width: 800px) {
+  .rpt-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+}
+
+.rpt-metric {
+  border: 1px solid var(--r-line) !important;
+  border-radius: 10px !important;
+  padding: 0.65rem 0.7rem !important;
+  background: var(--r-card) !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.2rem !important;
+}
+
+.rpt-metric .m-lab {
+  font-size: 0.62rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.07em !important;
+  text-transform: uppercase !important;
+  color: var(--r-ink3) !important;
+  font-family: var(--r-sans) !important;
+  line-height: 1.25 !important;
+}
+
+.rpt-metric .m-val {
+  font-family: var(--r-mono) !important;
+  font-size: 1.05rem !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums !important;
+  color: var(--r-ink) !important;
+  line-height: 1.2 !important;
+  word-break: break-word !important;
+}
+
+.rpt-metric .m-val.up { color: var(--r-up) !important; }
+.rpt-metric .m-val.down { color: var(--r-down) !important; }
+
+.rpt-metric .m-hint {
+  font-size: 0.72rem !important;
+  color: var(--r-ink3) !important;
+  line-height: 1.35 !important;
+  font-family: var(--r-sans) !important;
+  margin-top: 0.15rem !important;
+}
+
+/* Plain language blocks: Apa / Kenapa / Lakukan */
+.rpt-qa {
+  display: grid !important;
+  gap: 0.55rem !important;
+  margin: 0.9rem 0 0 !important;
+}
+
+.rpt-qa-item {
+  border-left: 3px solid var(--r-accent) !important;
+  padding: 0.55rem 0.75rem 0.55rem 0.85rem !important;
+  background: var(--r-soft) !important;
+  border-radius: 0 8px 8px 0 !important;
+}
+
+.rpt-qa-item.do { border-left-color: var(--r-up) !important; }
+.rpt-qa-item.warn { border-left-color: var(--r-warn) !important; }
+.rpt-qa-item.danger { border-left-color: var(--r-down) !important; }
+
+.rpt-qa-item .q {
+  font-size: 0.65rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--r-ink3) !important;
+  margin: 0 0 0.25rem !important;
+  font-family: var(--r-sans) !important;
+}
+
+.rpt-qa-item .a {
+  margin: 0 !important;
+  font-size: 0.9rem !important;
+  color: var(--r-ink) !important;
+  line-height: 1.55 !important;
+}
+
+.rpt-callout {
+  margin: 0.85rem 0 0 !important;
+  padding: 0.85rem 1rem !important;
+  border-radius: 10px !important;
+  border: 1px solid var(--r-line) !important;
+  background: var(--r-bg) !important;
+}
+
+.rpt-callout.cerah {
+  border-color: rgba(31,107,69,.35) !important;
+  background: var(--r-up-bg) !important;
+}
+.rpt-callout.suram {
+  border-color: rgba(180,35,24,.35) !important;
+  background: var(--r-down-bg) !important;
+}
+.rpt-callout.biasa {
+  border-color: var(--r-line) !important;
+}
+
+.rpt-callout .co-title {
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  margin: 0 0 0.35rem !important;
+  color: var(--r-ink3) !important;
+  font-family: var(--r-sans) !important;
+}
+
+.rpt-callout .co-body {
+  margin: 0 !important;
+  font-size: 0.9rem !important;
+  color: var(--r-ink) !important;
+  line-height: 1.5 !important;
+}
+
+.rpt-divider {
+  height: 1px !important;
+  background: var(--r-line) !important;
+  margin: 1rem 0 !important;
+  border: 0 !important;
+}
+
+.rpt-actions {
+  margin: 0.75rem 0 0 !important;
+  padding-left: 1.2rem !important;
+  color: var(--r-ink) !important;
+}
+.rpt-actions li {
+  margin: 0.4rem 0 !important;
+  line-height: 1.5 !important;
+  font-size: 0.9rem !important;
+}
+
+.rpt-subh {
+  margin: 1rem 0 0.4rem !important;
+  font-family: var(--r-sans) !important;
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--r-ink3) !important;
+}
+
 .rpt-scenarios {
   display: grid !important;
   grid-template-columns: 1fr !important;

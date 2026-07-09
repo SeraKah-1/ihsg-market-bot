@@ -215,57 +215,84 @@ function renderShortlistTable(pack) {
       const riskClass =
         risk === "high" ? "chip-risk-high" : risk === "med" ? "chip-risk-med" : "";
       const flowChip = s.flowHints?.flowAlive
-        ? `<span class="chip chip-flow">flow</span>`
-        : "";
-      const ctx = s.context || {};
-      const ctxShort = [
-        ctx.d1?.retPct != null ? `1d ${fmtSigned(ctx.d1.retPct)}%` : null,
-        ctx.w1?.retPct != null ? `1w ${fmtSigned(ctx.w1.retPct)}%` : null,
-        ctx.w1?.structure ? ctx.w1.structure : null,
-        ctx.m1?.retPct != null ? `1m ${fmtSigned(ctx.m1.retPct)}%` : null
-      ]
-        .filter(Boolean)
-        .join(" · ");
+        ? `<span class="chip chip-flow">flow hidup</span>`
+        : `<span class="chip">flow mati</span>`;
+      const chg = s.metrics?.changePct;
+      const rvol = s.metrics?.rvol;
+      const struct = s.context?.m1?.structure || s.context?.w1?.structure || "—";
+      const m1 = s.context?.m1?.retPct;
+      const volT = s.context?.vol?.volumeTrend || "—";
+      const rvolHint =
+        rvol == null
+          ? ""
+          : rvol >= 1.2
+            ? "volume hidup"
+            : rvol < 0.4
+              ? "volume sepi"
+              : "volume biasa";
       const whyHtml = (s.whySelected || [])
-        .map((w) => `<span class="chip">${esc(w)}</span>`)
+        .map((w) => `<span class="chip">${esc(humanWhy(w))}</span>`)
         .join(" ");
       return `<tr>
       <td><span class="ticker">${esc(s.ticker)}</span></td>
-      <td class="${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.metrics?.changePct)}%</td>
-      <td>${fmt(s.metrics?.rvol)}</td>
-      <td class="ctx-cell" title="${esc(ctx.summary || "")}">${esc(ctxShort || "—")}</td>
+      <td class="${(chg || 0) >= 0 ? "up" : "down"}"><strong>${fmtSigned(chg)}%</strong><div class="cell-hint">hari ini</div></td>
+      <td><strong>${fmt(rvol)}×</strong><div class="cell-hint">${esc(rvolHint)}</div></td>
+      <td class="ctx-cell">
+        <div class="ctx-grid">
+          <span><b class="${(m1 || 0) >= 0 ? "up" : "down"}">${m1 != null ? fmtSigned(m1) + "%" : "—"}</b> <span class="cell-hint">1 bulan</span></span>
+          <span><b>${esc(struct)}</b> <span class="cell-hint">struktur</span></span>
+          <span><b>${esc(volT)}</b> <span class="cell-hint">tren vol</span></span>
+        </div>
+      </td>
       <td><div class="chip-row">${whyHtml || "—"}</div></td>
-      <td><div class="chip-row"><span class="chip ${riskClass}">${esc(risk)}</span> ${flowChip}</div></td>
+      <td><div class="chip-row"><span class="chip ${riskClass}">exit-liq ${esc(risk === "high" ? "tinggi" : risk === "med" ? "sedang" : "rendah")}</span> ${flowChip}</div></td>
     </tr>`;
     })
     .join("");
 
   const regime = pack.marketRegime;
+  const ihsgChg = pack.ihsg?.changePct;
   el.innerHTML = `
     <div class="meta-strip">
-      <span>Day <b>${esc(pack.day)}</b></span>
+      <span>Hari <b>${esc(pack.day)}</b></span>
       <span>Regime <b>${esc(regime?.tag || "—")}</b></span>
-      <span>IHSG <b>${esc(regime?.ihsgSummary || pack.ihsg?.context?.summary || "—")}</b></span>
-      <span>Breadth <b>${pack.breadth?.adv ?? "—"} / ${pack.breadth?.dec ?? "—"}</b></span>
+      <span>IHSG <b class="${(ihsgChg || 0) >= 0 ? "up" : "down"}">${fmtSigned(ihsgChg)}%</b></span>
+      <span>Breadth <b>${pack.breadth?.adv ?? "—"} naik / ${pack.breadth?.dec ?? "—"} turun</b></span>
       <span>Coverage <b>${fmt(pack.dataQuality?.coveragePct)}%</b></span>
       <span><b>${pack.dataQuality?.fromCache ? "cache" : "fresh"}</b></span>
     </div>
-    ${regime?.note ? `<div class="meta-strip"><span>${esc(regime.note)}</span></div>` : ""}
+    ${
+      regime?.note
+        ? `<div class="meta-strip meta-note"><span>${esc(regime.note)}</span></div>`
+        : ""
+    }
     <div class="table-wrap">
-      <table class="data">
+      <table class="data data-readable">
         <thead>
           <tr>
-            <th scope="col">Ticker</th>
-            <th scope="col">1d%</th>
-            <th scope="col">RVOL</th>
-            <th scope="col">Context 1d/1w/1m</th>
-            <th scope="col">Why</th>
-            <th scope="col">Risk</th>
+            <th scope="col">Emiten</th>
+            <th scope="col">Return 1h</th>
+            <th scope="col">Volume relatif</th>
+            <th scope="col">Konteks (pisah)</th>
+            <th scope="col">Kenapa dipilih</th>
+            <th scope="col">Risiko</th>
           </tr>
         </thead>
         <tbody>${rows || `<tr><td colspan="6" class="muted">Tidak ada pick</td></tr>`}</tbody>
       </table>
-    </div>`;
+    </div>
+    <p class="table-legend muted">Volume relatif (RVOL): &gt;1.2 hidup · 0.7–1.2 biasa · &lt;0.4 sepi (hati-hati ngejar). Struktur HH_HL = tren naik utuh; LH_LL = lemah.</p>`;
+}
+
+function humanWhy(w) {
+  const m = {
+    top_gainer: "lonjakan harian",
+    top_loser: "anjlok harian",
+    rvol_spike: "volume melonjak",
+    return_z_anomaly: "gerak harian tidak biasa",
+    flow: "indikasi flow"
+  };
+  return m[w] || w;
 }
 
 function fmt(n) {

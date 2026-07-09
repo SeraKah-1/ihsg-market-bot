@@ -8,21 +8,21 @@ import { GLOBAL_RULES } from "./constitution.js";
 import { modelSupportsNativeSearch } from "../search/native-search.js";
 import { runAgenticNativeLoop } from "../search/agentic-web.js";
 import { hybridResearchSearch, researchModel } from "../search/native-search.js";
+import { plainFromHard, heuristicPriceOutlook } from "../metric-gloss.js";
 
 export function deepDiveSystem() {
   return (
     GLOBAL_RULES +
     `
 
-ROLE: Deep-dive analyst emiten IDX (neurodivergent scan / needle-in-haystack).
-Kamu BUKAN ringkas generik. Kamu:
-1) Baca data harga/context hard (fakta code) dulu — itu peta anomali.
-2) Dari anomali itu, TENTUKAN sendiri apa yang harus di-search (query dinamis).
-3) Pakai web search tools berkali-kali. Cari non-obvious: aksi korporasi, denda, resign, proyek, right issue, buyback, litigasi, related party, free float, belanja modal.
-4) Bedakan: official / media / rumor.
-5) Jika data finansial tidak ketemu: unexplained, JANGAN mengarang angka lapkeu.
-6) Forecast berani tapi invalidation + exit-liq.
-7) Bahasa ID, structured, no fluff.
+ROLE: Deep-dive analyst emiten IDX (needle-in-haystack) — output DIBACA MANUSIA.
+1) Baca metrics/context hard dulu (fakta code).
+2) Dynamic search: query sendiri — bisnis, lapkeu, proyek, aksi korp, denda, right issue, makro sektor.
+3) Wajib coba: ringkas lapkeu + proyeksi cerah|biasa|suram (funda) + tape harga cerah|biasa|suram + gabungan.
+4) Field plain: whatHappened / whyItMatters / whatToDo (bukan rantai singkatan).
+5) Bedakan official / media / rumor. JANGAN mengarang angka lapkeu.
+6) Forecast + invalidation + exit-liq.
+7) Bahasa ID lurus.
 
 Output JSON ketat sesuai schema.`
   );
@@ -43,6 +43,19 @@ export function deepDiveSchema() {
     "reasoningEffort": null,
     "queriesNote": ""
   },
+  "plain": {
+    "whatHappened": "apa yang terjadi — bahasa orang",
+    "whyItMatters": "kenapa penting",
+    "whatToDo": "lakukan / skip / watch + syarat"
+  },
+  "outlook": {
+    "price": "cerah|biasa|suram",
+    "fundamentals": "cerah|biasa|suram",
+    "combined": "cerah|biasa|suram",
+    "why": "gabungan tape + funda + sentimen/makro",
+    "fundamentalsWhy": "",
+    "macro": "backdrop sektor/makro singkat"
+  },
   "company": {
     "name": "",
     "sector": "",
@@ -57,9 +70,11 @@ export function deepDiveSchema() {
     "balanceSheet": "",
     "cashFlow": "",
     "valuationNotes": "",
+    "outlookTag": "cerah|biasa|suram",
+    "outlookWhy": "",
     "sources": []
   },
-  "prospects": { "summary": "", "projects": "" },
+  "prospects": { "summary": "", "projects": "", "macro": "" },
   "corporateActions": [{"type":"", "detail":"", "date":""}],
   "catalysts": [{"title":"", "detail":""}],
   "risks": [{"title":"", "detail":""}],
@@ -120,10 +135,11 @@ function buildHardContextPayload(ticker, marketPack, memory) {
     memoryRecent: (memory || []).slice(0, 6),
     instruction: [
       `Deep dive ${ticker}.`,
-      "1) Reason: dari metrics/context hard, apa yang mencurigakan atau menarik?",
-      "2) Dynamic search: susun query sendiri (boleh ID/EN), ikuti needle.",
-      "3) Jangan mengarang angka lapkeu. unexplained jika kosong.",
-      "4) Akhir: JSON schema deep_dive lengkap."
+      "1) Reason dari metrics/context: apa yang aneh/menarik (bahasa orang).",
+      "2) Search dinamis: bisnis, lapkeu, proyek, aksi korp, sentimen, makro sektor.",
+      "3) Isi plain + outlook cerah|biasa|suram (price vs funda vs combined).",
+      "4) Jangan mengarang angka lapkeu. unexplained jika kosong.",
+      "5) JSON deep_dive lengkap."
     ].join(" ")
   };
 }
@@ -139,6 +155,7 @@ function finalizeReport(out, { ticker, marketPack, searchMode, runId, stock, age
   out.marketContext = stock?.context || null;
   out.context = stock?.context || null;
   out.vsIhsg = stock?.vsIhsg || null;
+  out.metrics = stock?.metrics || out.metrics || null;
   out.marketRegime = marketPack?.marketRegime || null;
   out.disclaimer =
     out.disclaimer ||
@@ -154,6 +171,37 @@ function finalizeReport(out, { ticker, marketPack, searchMode, runId, stock, age
     }));
     out.sources = fromCitations.length ? fromCitations : fromSearch;
   }
+  // Human plain + outlook fallbacks from hard data
+  const hardStock = {
+    ticker,
+    metrics: stock?.metrics,
+    context: stock?.context,
+    whySelected: ["deep_dive"],
+    flowHints: stock?.flowHints
+  };
+  const hard = plainFromHard(hardStock);
+  const priceH = heuristicPriceOutlook(hardStock);
+  out.plain = {
+    whatHappened: out.plain?.whatHappened || hard.whatHappened,
+    whyItMatters: out.plain?.whyItMatters || hard.whyItMatters,
+    whatToDo: out.plain?.whatToDo || out.forecast?.bestMove || hard.whatToDo
+  };
+  out.outlook = out.outlook || {};
+  out.outlook.price = out.outlook.price || priceH.tag;
+  out.outlook.fundamentals =
+    out.outlook.fundamentals || out.financials?.outlookTag || "biasa";
+  out.outlook.combined =
+    out.outlook.combined ||
+    (out.forecast?.exitLiquidityRisk === "high"
+      ? "suram"
+      : out.outlook.price === "cerah" && out.outlook.fundamentals === "cerah"
+        ? "cerah"
+        : out.outlook.price === "suram" || out.outlook.fundamentals === "suram"
+          ? "suram"
+          : "biasa");
+  out.outlook.why = out.outlook.why || out.forecast?.thesis || priceH.why;
+  if (!out.financials) out.financials = {};
+  if (!out.financials.outlookTag) out.financials.outlookTag = out.outlook.fundamentals;
   return out;
 }
 

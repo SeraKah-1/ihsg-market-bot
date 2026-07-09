@@ -26,11 +26,15 @@ export async function runResearch({ shortlistPack, searchMode, searchResults, me
 
   const schemaHint = `{
   "marketNotes": [{"claim":"", "sourceTier":"media|official|rumor|unknown", "url":""}],
+  "macroNote": "backdrop makro/global/domestik dari search (atau kosong)",
+  "macroOutlookTag": "cerah|biasa|suram",
   "perTicker": {
     "TICKER": {
       "catalysts": [{"claim":"", "sourceTier":"", "url":""}],
       "unexplained": false,
-      "notes": ""
+      "notes": "bahasa orang: apa yang relevan",
+      "fundamentalsNote": "lapkeu/proyek/aksi korp jika ada di search; jangan mengarang angka",
+      "outlookTag": "cerah|biasa|suram"
     }
   },
   "unexplainedMarket": []

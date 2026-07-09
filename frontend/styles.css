@@ -451,13 +451,45 @@ table.data .ticker {
   font-weight: 600; color: var(--ink); font-family: var(--font-mono); font-size: 0.82rem;
 }
 table.data .ctx-cell {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  max-width: 320px;
+  white-space: normal;
+}
+table.data .cell-hint {
+  display: block;
+  font-size: 0.65rem;
   color: var(--ink-3);
-  max-width: 280px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-weight: 400;
+  margin-top: 0.15rem;
+  letter-spacing: 0.02em;
+}
+table.data .ctx-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+table.data .ctx-grid > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.5rem;
+}
+table.data .ctx-grid b { font-family: var(--font-mono); font-size: 0.8rem; }
+table.data .up { color: var(--up); }
+table.data .down { color: var(--down); }
+.meta-strip.meta-note {
+  font-family: var(--font-sans, Inter, system-ui, sans-serif);
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+.table-legend {
+  padding: 0.65rem 1rem 0.85rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin: 0;
+  border-top: 1px solid var(--border);
 }
 .chip-row {
   display: flex;

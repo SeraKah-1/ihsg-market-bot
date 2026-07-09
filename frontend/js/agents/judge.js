@@ -1,6 +1,11 @@
 import { chatJson, modelFor } from "../ai.js";
 import { judgeSystem } from "./constitution.js";
 import { applyStanceToBriefing } from "./stance-rules.js";
+import {
+  plainFromHard,
+  plainMarketFromHard,
+  heuristicPriceOutlook
+} from "../metric-gloss.js";
 
 export async function runJudge({
   shortlistPack,
@@ -22,47 +27,64 @@ export async function runJudge({
   "asOfSession": "${shortlistPack.day}",
   "searchMode": "${searchMode}",
   "sentiment": {
-    "fear": {"summary":""},
-    "positive": {"summary":""},
+    "fear": {"summary":"bahasa orang, jebakan apa"},
+    "positive": {"summary":"bahasa orang, flow mana"},
     "judgeLean": "fear|neutral|positive",
-    "judgeRationale": "",
+    "judgeRationale": "2-4 kalimat manusiawi, JANGAN rantai singkatan",
     "judgePriority": "follow_money|avoid_exit_liq|mixed",
-    "confidenceRaw": 0.5,
     "confidenceLabel": "uncalibrated"
   },
   "marketWide": {
     "regimeTag": "",
-    "themes": [],
-    "unexplained": [],
-    "bestMoveOverall": "",
-    "followMoneyThesis": ""
+    "plainHeadline": "1 kalimat: apa yang terjadi di IHSG hari ini",
+    "whatItMeans": "2-3 kalimat makna untuk trader/investor",
+    "themes": ["tema manusiawi"],
+    "unexplained": ["apa yang aneh tanpa berita"],
+    "bestMoveOverall": "instruksi konkret",
+    "followMoneyThesis": "uang ke mana / mati di mana",
+    "nextActions": ["checklist 1","checklist 2"],
+    "macroOutlook": {"tag":"cerah|biasa|suram","why":"makro+sentimen+tape indeks"},
+    "fundamentalsOutlook": {"tag":"cerah|biasa|suram","why":"hanya jika ada sinyal; else biasa + unexplained"}
   },
   "shortlist": [{
     "ticker": "",
     "whySelected": [],
-    "metrics": {},
-    "catalysts": [],
-    "psychology": "",
+    "plain": {
+      "whatHappened": "apa yang terjadi di ticker ini",
+      "whyItMatters": "kenapa relevan hari ini",
+      "whatToDo": "lakukan / skip / watch + syarat"
+    },
+    "fundamentals": {
+      "summary": "lapkeu/proyek/aksi korp dari research atau unexplained",
+      "outlookTag": "cerah|biasa|suram",
+      "outlookWhy": ""
+    },
+    "outlook": {
+      "price": "cerah|biasa|suram",
+      "fundamentals": "cerah|biasa|suram",
+      "combined": "cerah|biasa|suram",
+      "priceWhy": "",
+      "fundamentalsWhy": ""
+    },
     "followMoney": {"flowAlive": true, "whoIsPushing": "", "fuelLeft": "unknown", "asymmetryNote": ""},
     "stance": {
       "aggressionAllowed": true,
-      "exitLiquidityRisk": "low",
-      "fomoThesis": "",
-      "invalidation": "",
+      "exitLiquidityRisk": "low|med|high",
+      "fomoThesis": "bahasa orang",
+      "invalidation": "kapan batal",
       "timeHorizon": "1-5d",
-      "judgePriority": "follow_money"
+      "judgePriority": "follow_money|avoid_exit_liq|mixed"
     },
     "scenarios": {
-      "base": {"narrative":"","horizon":"1-5d","prob":0.5},
+      "base": {"narrative":"cerita manusiawi","horizon":"1-5d","prob":0.5},
       "bull": {"narrative":"","horizon":"1-5d","prob":0.25},
       "bear": {"narrative":"","horizon":"1-5d","prob":0.25}
     },
     "bestMoveFraming": ""
   }],
-  "diagrams": {"flowMermaid": "flowchart TD\\n  A[IHSG] --> B[Flow]"},
   "memoryWrite": {
     "compact": {"regimeTag":"","themes":[],"lean":"","top_tickers_1line":[]},
-    "openHypotheses": [{"id":"","claim":"","prob":0.5,"horizon_end":"","resolution_rule":""}]
+    "openHypotheses": []
   },
   "disclaimer": "Bukan saran investasi. Keputusan akhir di user. Confidence uncalibrated."
 }`;
@@ -73,10 +95,9 @@ export async function runJudge({
       model,
       system:
         judgeSystem() +
-        "\nIsi SEMUA field penting. metrics+context+marketRegime SALIN dari input (jangan ubah angka)." +
-        "\nWajib pakai marketRegime + ihsg.context untuk framing kondisi market." +
-        "\nPer ticker: pakai context.summary / slope / structure / vsIhsg — jangan spekulasi indikator di luar data." +
-        "\nSchema contoh:\n" +
+        "\nIsi SEMUA field plain + outlook + fundamentals. metrics/context SALIN dari input." +
+        "\nResearch.perTicker.*.notes dan fundamentalsNote adalah sumber funda — jangan mengarang angka." +
+        "\nSchema:\n" +
         schema,
       user: JSON.stringify(
         {
@@ -178,7 +199,122 @@ export async function runJudge({
   };
 
   briefing = applyStanceToBriefing(briefing);
+  briefing = enrichBriefingForHumans(briefing, shortlistPack, research);
   return briefing;
+}
+
+/**
+ * Fill plain language + outlook if Judge skipped / wrote jargon only.
+ * Hard metrics stay from code; prose fallback from metric-gloss + research.
+ */
+export function enrichBriefingForHumans(briefing, shortlistPack, research) {
+  if (!briefing) return briefing;
+  const packPlain = plainMarketFromHard(shortlistPack || {});
+  briefing.marketWide = briefing.marketWide || {};
+  const mw = briefing.marketWide;
+  if (!mw.plainHeadline || looksLikeJargonSoup(mw.plainHeadline)) {
+    mw.plainHeadline = packPlain.plainHeadline;
+  }
+  if (!mw.whatItMeans) mw.whatItMeans = packPlain.whatItMeans;
+  if (!mw.nextActions?.length) mw.nextActions = packPlain.nextActions;
+  if (!mw.macroOutlook?.tag) {
+    mw.macroOutlook = {
+      tag: heuristicMacroTag(shortlistPack),
+      why: packPlain.macroBackdrop + " " + (shortlistPack?.marketRegime?.note || "")
+    };
+  }
+  if (!mw.bestMoveOverall) {
+    mw.bestMoveOverall =
+      briefing.sentiment?.judgePriority === "avoid_exit_liq"
+        ? "Prioritas: jangan jadi exit liquidity. Skip tape sepi & spike tanpa berita."
+        : "Pilih flow hidup dengan invalidation; skip yang volume mati.";
+  }
+  if (!mw.followMoneyThesis) {
+    mw.followMoneyThesis = packPlain.whatItMeans;
+  }
+
+  const researchPer = research?.perTicker || {};
+  briefing.shortlist = (briefing.shortlist || []).map((row) => {
+    const hard = plainFromHard(row);
+    const priceH = heuristicPriceOutlook(row);
+    row.plain = {
+      whatHappened: row.plain?.whatHappened || hard.whatHappened,
+      whyItMatters: row.plain?.whyItMatters || hard.whyItMatters,
+      whatToDo: row.plain?.whatToDo || row.bestMoveFraming || hard.whatToDo
+    };
+    if (looksLikeJargonSoup(row.plain.whatHappened)) {
+      row.plain.whatHappened = hard.whatHappened;
+    }
+    const r = researchPer[row.ticker] || {};
+    row.fundamentals = row.fundamentals || {};
+    if (!row.fundamentals.summary) {
+      row.fundamentals.summary =
+        r.fundamentalsNote ||
+        r.notes ||
+        (r.unexplained
+          ? "Tidak ketemu berita/lapkeu relevan di search sesi ini (unexplained)."
+          : "Data funda terbatas di sesi ini.");
+    }
+    if (!row.fundamentals.outlookTag) {
+      row.fundamentals.outlookTag = r.outlookTag || "biasa";
+    }
+    if (!row.fundamentals.outlookWhy) {
+      row.fundamentals.outlookWhy =
+        r.fundamentalsNote ||
+        "Outlook funda default biasa sampai ada lapkeu/proyek yang terbaca.";
+    }
+    row.outlook = row.outlook || {};
+    row.outlook.price = row.outlook.price || priceH.tag;
+    row.outlook.priceWhy = row.outlook.priceWhy || priceH.why;
+    row.outlook.fundamentals = row.outlook.fundamentals || row.fundamentals.outlookTag;
+    row.outlook.fundamentalsWhy =
+      row.outlook.fundamentalsWhy || row.fundamentals.outlookWhy;
+    row.outlook.combined =
+      row.outlook.combined ||
+      combineOutlook(
+        row.outlook.price,
+        row.outlook.fundamentals,
+        row.stance?.exitLiquidityRisk
+      );
+    if (!row.bestMoveFraming) row.bestMoveFraming = row.plain.whatToDo;
+    return row;
+  });
+
+  // Soften judge rationale if pure jargon
+  if (looksLikeJargonSoup(briefing.sentiment?.judgeRationale)) {
+    briefing.sentiment = briefing.sentiment || {};
+    briefing.sentiment.judgeRationale =
+      mw.plainHeadline + " " + (mw.bestMoveOverall || "");
+  }
+  return briefing;
+}
+
+function looksLikeJargonSoup(s) {
+  const t = String(s || "");
+  if (t.length < 12) return true;
+  const hits = (t.match(/flowAlive|volumeTrend|rvol|m1\+|y1\+|exit-liq|HH_HL|LH_LL|post-parabolic/gi) || [])
+    .length;
+  const hasSpaces = (t.match(/\s/g) || []).length;
+  // many tech tokens + few spaces relative to length, or 3+ jargon tokens
+  return hits >= 3 || (hits >= 2 && hasSpaces < 8);
+}
+
+function heuristicMacroTag(pack) {
+  const tag = String(pack?.marketRegime?.tag || "").toLowerCase();
+  const chg = pack?.ihsg?.changePct;
+  if (tag.includes("risk_on") || tag.includes("trend_up")) return "cerah";
+  if (tag.includes("risk_off") || tag.includes("trend_down")) return "suram";
+  if (tag.includes("high_vol") || (chg != null && Math.abs(chg) >= 1.5)) return "biasa";
+  return "biasa";
+}
+
+function combineOutlook(price, funda, exitRisk) {
+  if (exitRisk === "high") return "suram";
+  const score = (t) => (t === "cerah" ? 1 : t === "suram" ? -1 : 0);
+  const s = score(price) + score(funda);
+  if (s >= 1) return "cerah";
+  if (s <= -1) return "suram";
+  return "biasa";
 }
 
 function buildHeuristicBriefing({ shortlistPack, fear, positive, searchMode, runId }) {
