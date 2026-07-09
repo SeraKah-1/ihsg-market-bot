@@ -20,20 +20,99 @@ function applyTheme(mode) {
   if (meta) meta.setAttribute("content", dark ? "#1c1917" : "#f3efe6");
 }
 
+/** In-memory model catalog for filter + selects */
+let modelCatalog = [];
+
+const MODEL_SELECT_IDS = ["model-research", "model-fear", "model-positive", "model-judge"];
+
+/**
+ * Populate role <select>s via DOM APIs (safe for ids with /, :, etc.).
+ * Preserves current selection when still in list; otherwise keeps custom option.
+ */
+function applyModelsToSelects(ids, { filter = "" } = {}) {
+  const all = Array.isArray(ids) ? ids : [];
+  modelCatalog = all;
+  const q = String(filter || "")
+    .trim()
+    .toLowerCase();
+  const filtered = q ? all.filter((id) => id.toLowerCase().includes(q)) : all;
+
+  for (const sid of MODEL_SELECT_IDS) {
+    const sel = $(sid);
+    if (!sel || sel.tagName !== "SELECT") continue;
+    const prev = sel.value || appSettings.models?.[sid.replace("model-", "")] || "";
+
+    // rebuild options safely
+    sel.replaceChildren();
+
+    // placeholder (not disabled — disabled+selected can block dropdown UX in some browsers)
+    const ph = document.createElement("option");
+    ph.value = "";
+    ph.textContent = filtered.length
+      ? `— pilih model (${filtered.length}${q ? " filtered" : ""}) —`
+      : "— fetch models dulu —";
+    if (!prev) ph.selected = true;
+    sel.appendChild(ph);
+
+    // keep previous value even if filtered out (so save still works)
+    if (prev && !filtered.includes(prev)) {
+      const keep = document.createElement("option");
+      keep.value = prev;
+      keep.textContent = prev + (all.includes(prev) ? " (hidden by filter)" : " (saved)");
+      keep.selected = true;
+      sel.appendChild(keep);
+    }
+
+    for (const id of filtered) {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = id;
+      if (id === prev) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
 function bindSettingsForm() {
   loadSettings();
   const s = appSettings;
   if ($("custom-endpoint")) $("custom-endpoint").value = s.customEndpoint || "";
   if ($("custom-api-key")) $("custom-api-key").value = s.customApiKey || "";
   if ($("use-cors-proxy")) $("use-cors-proxy").checked = !!s.useCorsProxy;
-  if ($("model-research")) $("model-research").value = s.models?.research || "";
-  if ($("model-fear")) $("model-fear").value = s.models?.fear || "";
-  if ($("model-positive")) $("model-positive").value = s.models?.positive || "";
-  if ($("model-judge")) $("model-judge").value = s.models?.judge || "";
+  // selects filled by applyModelsToSelects after catalog load
   if ($("shortlist-k")) $("shortlist-k").value = s.shortlistK || 8;
   if ($("max-ingest")) $("max-ingest").value = s.maxIngest || 0;
   if ($("force-refresh")) $("force-refresh").checked = !!s.forceRefresh;
   if ($("search-mode")) $("search-mode").value = s.searchModeOverride || "auto";
+
+  // seed selects with saved values even before fetch
+  const saved = [
+    s.models?.research,
+    s.models?.fear,
+    s.models?.positive,
+    s.models?.judge
+  ].filter(Boolean);
+  const uniqueSaved = [...new Set(saved)];
+  if (uniqueSaved.length && !modelCatalog.length) {
+    applyModelsToSelects(uniqueSaved);
+  } else if (modelCatalog.length) {
+    applyModelsToSelects(modelCatalog);
+  } else {
+    applyModelsToSelects([]);
+    // still show saved as selected options
+    for (const sid of MODEL_SELECT_IDS) {
+      const sel = $(sid);
+      const key = sid.replace("model-", "");
+      const val = s.models?.[key];
+      if (sel && val) {
+        const opt = document.createElement("option");
+        opt.value = val;
+        opt.textContent = val;
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+  }
 }
 
 function readSettingsFromForm() {
@@ -138,17 +217,16 @@ function init() {
     if (st) st.textContent = "Fetching /models…";
     try {
       const ids = await fetchModels();
-      const dl = $("model-list");
-      if (dl) {
-        dl.innerHTML = ids.map((id) => `<option value="${id.replace(/"/g, "&quot;")}"></option>`).join("");
-      }
-      // persist last list for convenience
+      const filter = $("model-filter")?.value || "";
+      applyModelsToSelects(ids, { filter });
       try {
         localStorage.setItem("ihsg-model-list", JSON.stringify(ids));
       } catch {
-        /* */
+        /* quota / private mode */
       }
-      if (st) st.textContent = `${ids.length} models · pilih dari dropdown input`;
+      if (st) {
+        st.textContent = `${ids.length} models loaded · pakai dropdown di bawah (bisa di-filter)`;
+      }
       logLine(`Fetched ${ids.length} models`);
       setStatus(`${ids.length} models ready`, "ok");
     } catch (e) {
@@ -160,14 +238,17 @@ function init() {
     }
   });
 
-  // hydrate model datalist from cache
+  // Filter without re-fetch
+  $("model-filter")?.addEventListener("input", () => {
+    if (!modelCatalog.length) return;
+    applyModelsToSelects(modelCatalog, { filter: $("model-filter").value || "" });
+  });
+
+  // hydrate selects from cache
   try {
     const cached = JSON.parse(localStorage.getItem("ihsg-model-list") || "[]");
     if (Array.isArray(cached) && cached.length) {
-      const dl = $("model-list");
-      if (dl) {
-        dl.innerHTML = cached.map((id) => `<option value="${String(id).replace(/"/g, "&quot;")}"></option>`).join("");
-      }
+      applyModelsToSelects(cached);
       const st = $("models-status");
       if (st) st.textContent = `${cached.length} models (cache) · fetch ulang untuk update`;
     }

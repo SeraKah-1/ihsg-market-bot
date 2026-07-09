@@ -101,22 +101,28 @@
             </button>
             <p id="models-status" class="fineprint" style="margin-top:0.4rem;text-align:left">Belum di-fetch</p>
             <label class="field">
+              <span class="field-label">Filter list</span>
+              <input id="model-filter" type="search" placeholder="Ketik untuk filter…" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="field">
               <span class="field-label">Research</span>
-              <input id="model-research" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+              <select id="model-research" class="model-select"></select>
             </label>
             <label class="field">
               <span class="field-label">Fear</span>
-              <input id="model-fear" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+              <select id="model-fear" class="model-select"></select>
             </label>
             <label class="field">
               <span class="field-label">Positive</span>
-              <input id="model-positive" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+              <select id="model-positive" class="model-select"></select>
             </label>
             <label class="field">
               <span class="field-label">Judge</span>
-              <input id="model-judge" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+              <select id="model-judge" class="model-select"></select>
             </label>
-            <datalist id="model-list"></datalist>
+            <p class="fineprint" style="text-align:left;margin-top:0.5rem">
+              Pakai &lt;select&gt; native (bukan datalist) agar stabil saat model banyak.
+            </p>
           </div>
         </details>
 
