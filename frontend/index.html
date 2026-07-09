@@ -90,6 +90,13 @@
               <input id="use-cors-proxy" type="checkbox" checked />
               <span>CORS proxy</span>
             </label>
+            <label class="field">
+              <span class="field-label">Jina API key (opsional)</span>
+              <input id="jina-api-key" type="password" autocomplete="off" placeholder="jina_… · atau set di server .env" />
+            </label>
+            <p class="fineprint" style="text-align:left;margin:0.25rem 0 0">
+              Search/fetch: native tools model dulu, lalu Jina (<code>s.jina.ai</code> / <code>r.jina.ai</code>), terakhir Google News RSS. Key lebih aman di server <code>.env</code> (<code>JINA_API_KEY</code>).
+            </p>
           </div>
         </details>
 
@@ -153,14 +160,14 @@
             <label class="field">
               <span class="field-label">Search mode</span>
               <select id="search-mode">
-                <option value="auto">Auto — native tools if Grok/Gemini/GPT, else news</option>
-                <option value="FULL">FULL — native web_search / google_search</option>
-                <option value="FALLBACK">FALLBACK — free Google News only</option>
+                <option value="auto">Auto — native if Grok/Gemini/GPT, else Jina+news</option>
+                <option value="FULL">FULL — native tools first, then Jina + news</option>
+                <option value="FALLBACK">FALLBACK — Jina + Google News (no native tools)</option>
                 <option value="DEGRADED">DEGRADED — no search</option>
               </select>
             </label>
             <p class="fineprint" style="text-align:left;margin:0.35rem 0 0">
-              FULL: xAI <code>web_search</code> / Gemini <code>google_search</code> via router. Auto pilih FULL untuk model xai/grok*.
+              FULL: native <code>web_search</code> / <code>google_search</code> dulu; fallback Jina + news. Fetch halaman = Jina Reader (bukan 9Router).
             </p>
             <label class="check">
               <input id="force-refresh" type="checkbox" />

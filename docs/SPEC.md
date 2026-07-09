@@ -12,10 +12,18 @@
 1. Ingest all (or max) IDX tickers via Yahoo → cache by day  
 2. Features + shortlist K  
 3. Search FULL|FALLBACK|DEGRADED  
+   - **FULL**: native model tools first (xAI `web_search` / Gemini `google_search`) → Jina `s.jina.ai` → Google News RSS  
+   - **Fetch pages** (deep dive): Jina Reader `r.jina.ai` (Bearer key preferred; not 9Router)  
 4. Research → Fear ‖ Positive → Judge JSON  
 5. Stance rules (code) patch  
 6. Save run + compact memory  
 7. Render HTML / export  
+
+## Web stack (own, not 9Router)
+- Server: `lib/web-client.js` + `lib/web-core.js`; routes `/api/web/search|fetch|research`
+- Key: `JINA_API_KEY` in gitignored `.env`, optional UI override `jinaApiKey`
+- 9Router `/v1/search` + `/v1/web/fetch` intentionally **not** used  
+
 
 ## Success metrics
 - Metrics in JSON match code source  

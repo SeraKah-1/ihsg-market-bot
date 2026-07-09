@@ -283,11 +283,10 @@ function extractToolTraces(data) {
 }
 
 /**
- * Hybrid research (pragmatic order):
- * 1) 9Router /v1/search via same-origin /api/web/research (when endpoint set)
- * 2) Free Google News RSS (always fills gaps)
- * 3) Optional page fetch (deep dive): 9r fetch → free Jina Reader
- * 4) Optional native model tools only if FULL and still thin (skip if enough hits)
+ * Hybrid research (product order — no 9Router):
+ * 1) Native model tools first when FULL + model supports (xAI web_search / Gemini google_search)
+ * 2) Server pack: Jina s.jina.ai search (+ optional r.jina.ai page fetch for deep dive)
+ * 3) Free Google News RSS gap-fill
  */
 export async function hybridResearchSearch({
   model,
@@ -304,6 +303,7 @@ export async function hybridResearchSearch({
   let pages = [];
   let nativeMode = null;
   let layer = "none";
+  let usedNative = false;
 
   if (searchMode === "DEGRADED") {
     onLog?.("Search DEGRADED — skip web");
@@ -316,95 +316,15 @@ export async function hybridResearchSearch({
     };
   }
 
-  // Primary: server research pack (9r search → news; optional fetch)
-  try {
-    let endpoint = "";
-    let apiKey = "";
-    try {
-      const creds = resolveProviderCredentials();
-      endpoint = creds.endpoint;
-      apiKey = creds.apiKey;
-    } catch {
-      onLog?.("No router credentials — free news only", "warn");
-    }
-
-    onLog?.(
-      `Web research: 9Router search first → news fallback${fetchPages ? ` → fetch≤${fetchLimit}` : ""}`
-    );
-    const res = await fetch("/api/web/research", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        endpoint,
-        apiKey,
-        queries: (queries || []).slice(0, 12),
-        max_results: 4,
-        search_type: "news",
-        searchModel: appSettings.searchProvider || null,
-        fetchPages: !!fetchPages && fetchLimit > 0,
-        fetchLimit: fetchLimit || 0,
-        fetchModel: appSettings.fetchProvider || null,
-        max_characters: unrestrictedWeb ? 8000 : 5000
-      }),
-      signal
-    });
-    if (res.ok) {
-      const data = await res.json();
-      layer = data.layer || "none";
-      for (const r of data.results || []) {
-        results.push({
-          title: r.title || "",
-          url: r.url || "",
-          snippet: r.snippet || "",
-          sourceTier: r.sourceTier || "media",
-          provider: r.provider || "web",
-          query: r.query || ""
-        });
-      }
-      pages = data.pages || [];
-      onLog?.(
-        `Web layer=${layer} hits=${results.length} pages=${pages.length}` +
-          (data.errors?.length ? ` err=${data.errors[0]}` : "")
-      );
-    } else {
-      onLog?.(`Web research HTTP ${res.status} — news-only fallback`, "warn");
-    }
-  } catch (e) {
-    onLog?.(`Web research failed: ${e.message || e}`, "warn");
-  }
-
-  // Guarantee free news if still empty
-  if (results.length < 2) {
-    onLog?.("Filling with free news RSS…");
-    for (const q of queries || []) {
-      if (signal?.aborted) break;
-      try {
-        const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=4", {
-          signal
-        });
-        if (!res.ok) continue;
-        const data = await res.json();
-        for (const r of data.results || []) {
-          results.push({ ...r, query: q, provider: r.provider || "google-news-rss" });
-        }
-      } catch {
-        /* */
-      }
-    }
-    if (results.length) {
-      layer = layer === "none" ? "news-rss" : layer.includes("news-rss") ? layer : layer + "+news-rss";
-    }
-  }
-
-  // Optional: native model tools only when FULL and still sparse (avoid overengineering cost)
-  const useNative =
+  // 1) Native tools primary when FULL (or auto resolved to FULL)
+  const tryNativeFirst =
     searchMode === "FULL" &&
-    results.length < 3 &&
     model &&
-    modelSupportsNativeSearch(model);
+    modelSupportsNativeSearch(model) &&
+    appSettings.preferNativeSearch !== false;
 
-  if (useNative) {
-    onLog?.(`Sparse hits — try native tools (${model})…`);
+  if (tryNativeFirst) {
+    onLog?.(`Native web tools first (${model})…`);
     const system = `Financial research agent IDX. Use web search tools. Return JSON only:
 {"findings":[{"claim":"","sourceTier":"media|official|rumor|unknown","url":"","query":""}]}`;
     const user = `Search:\n${(queries || []).map((q, i) => `${i + 1}. ${q}`).join("\n")}`;
@@ -430,14 +350,18 @@ export async function hybridResearchSearch({
             query: f.query || "",
             provider: "native-tool"
           });
+          usedNative = true;
         }
       } catch {
-        results.push({
-          title: "native_search_prose",
-          snippet: String(native.content).slice(0, 2000),
-          url: "",
-          provider: "native-tool"
-        });
+        if (String(native.content).length > 40) {
+          results.push({
+            title: "native_search_prose",
+            snippet: String(native.content).slice(0, 2000),
+            url: "",
+            provider: "native-tool"
+          });
+          usedNative = true;
+        }
       }
     }
     for (const c of native.citations || []) {
@@ -447,8 +371,97 @@ export async function hybridResearchSearch({
         snippet: "",
         provider: "native-citation"
       });
+      usedNative = true;
     }
-    if (results.length) layer = layer === "none" ? "native-tools" : layer + "+native";
+    if (usedNative) {
+      layer = "native-tools";
+      onLog?.(`Native tools: mode=${nativeMode} hits≈${results.length}`);
+    } else {
+      onLog?.(
+        `Native thin/failed (${native.mode || "?"} ${native.error || ""}) — Jina + news`,
+        "warn"
+      );
+    }
+  }
+
+  // 2) Server: Jina search (+ fetch) always enriches unless FALLBACK wants news-only cheap path
+  //    FALLBACK still uses Jina if key present; DEGRADED already returned.
+  const skipServerPack = searchMode === "FALLBACK" && results.length >= 4;
+  if (!skipServerPack) {
+    try {
+      onLog?.(
+        `Web fallback: Jina search${fetchPages ? ` → fetch≤${fetchLimit}` : ""} → news gap`
+      );
+      const res = await fetch("/api/web/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: (queries || []).slice(0, 12),
+          max_results: 4,
+          jinaApiKey: appSettings.jinaApiKey || "",
+          fetchPages: !!fetchPages && fetchLimit > 0,
+          fetchLimit: fetchLimit || 0,
+          max_characters: unrestrictedWeb ? 8000 : 5000
+        }),
+        signal
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const serverLayer = data.layer || "none";
+        for (const r of data.results || []) {
+          results.push({
+            title: r.title || "",
+            url: r.url || "",
+            snippet: r.snippet || "",
+            sourceTier: r.sourceTier || "media",
+            provider: r.provider || "web",
+            query: r.query || ""
+          });
+        }
+        if (data.pages?.length) pages = data.pages;
+        if (serverLayer !== "none") {
+          layer =
+            layer === "none"
+              ? serverLayer
+              : layer.includes(serverLayer)
+                ? layer
+                : `${layer}+${serverLayer}`;
+        }
+        onLog?.(
+          `Server layer=${serverLayer} hits=${results.length} pages=${pages.length}` +
+            (data.hasJinaKey === false ? " (no JINA key on server)" : "") +
+            (data.errors?.length ? ` err=${data.errors[0]}` : "")
+        );
+      } else {
+        onLog?.(`Web research HTTP ${res.status}`, "warn");
+      }
+    } catch (e) {
+      onLog?.(`Web research failed: ${e.message || e}`, "warn");
+    }
+  }
+
+  // 3) Guarantee free news if still empty
+  if (results.length < 2 && searchMode !== "DEGRADED") {
+    onLog?.("Filling with free news RSS…");
+    for (const q of queries || []) {
+      if (signal?.aborted) break;
+      try {
+        const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=4", {
+          signal
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        for (const r of data.results || []) {
+          results.push({ ...r, query: q, provider: r.provider || "google-news-rss" });
+        }
+      } catch {
+        /* */
+      }
+    }
+    if (results.length) {
+      layer =
+        layer === "none" ? "news-rss" : layer.includes("news-rss") ? layer : layer + "+news-rss";
+    }
   }
 
   const seen = new Set();
@@ -462,7 +475,7 @@ export async function hybridResearchSearch({
   const effective =
     searchMode === "DEGRADED"
       ? "DEGRADED"
-      : layer.includes("9r-search") || layer.includes("native")
+      : layer.includes("native") || layer.includes("jina-search")
         ? "FULL"
         : "FALLBACK";
 

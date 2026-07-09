@@ -5,7 +5,38 @@ const path = require("path");
 const fs = require("fs");
 const { isAllowedProxyTarget, normalizeProxyTarget } = require("./api/proxy-allowlist.js");
 const marketApi = require("./lib/market-api.js");
-const webClient = require("./lib/ninerouter-web-client.js");
+const webClient = require("./lib/web-client.js");
+const { mergeLayerLabel } = require("./lib/web-core.js");
+
+/** Load gitignored .env into process.env (no dotenv dep). */
+function loadDotEnv() {
+  try {
+    const p = path.join(__dirname, ".env");
+    if (!fs.existsSync(p)) return;
+    for (const line of fs.readFileSync(p, "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq < 1) continue;
+      const k = t.slice(0, eq).trim();
+      let v = t.slice(eq + 1).trim();
+      if (
+        (v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))
+      ) {
+        v = v.slice(1, -1);
+      }
+      if (k && process.env[k] == null) process.env[k] = v;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+loadDotEnv();
+
+function resolveJinaKey(bodyKey) {
+  return String(bodyKey || process.env.JINA_API_KEY || "").trim();
+}
 
 const FRONTEND_PORT = process.env.PORT || 3010;
 const PROXY_PORT = process.env.PROXY_PORT || 8081;
@@ -191,37 +222,21 @@ if (require.main === module) {
   });
 
   /**
-   * 9Router POST /v1/search (same custom endpoint + key as chat).
-   * Body: { endpoint, apiKey, query, max_results?, search_type?, model? }
+   * Jina Search (s.jina.ai). Body: { query, max_results?, jinaApiKey? }
+   * Key: body.jinaApiKey || process.env.JINA_API_KEY
    */
   app.post("/api/web/search", async (req, res) => {
     try {
       const b = req.body || {};
-      const endpoint = b.endpoint || "";
-      const apiKey = b.apiKey || "";
       const query = b.query || "";
       if (!query) return res.status(400).json({ error: "query required" });
-      if (!endpoint) {
-        return res.json({
-          ok: false,
-          results: [],
-          layer: "none",
-          errors: ["no_endpoint"],
-          query
-        });
-      }
-      const out = await webClient.searchVia9Router({
-        endpoint,
-        apiKey,
+      const jinaApiKey = resolveJinaKey(b.jinaApiKey);
+      const out = await webClient.searchViaJina({
         query,
         max_results: b.max_results || 5,
-        search_type: b.search_type || "news",
-        model: b.model || null
+        jinaApiKey
       });
-      res.json({
-        ...out,
-        layer: out.ok ? "9r-search" : "none"
-      });
+      res.json(out);
     } catch (e) {
       console.error("[web/search]", e);
       res.status(500).json({ error: String(e.message || e), results: [], ok: false });
@@ -229,8 +244,8 @@ if (require.main === module) {
   });
 
   /**
-   * Fetch page: 9Router /v1/web/fetch then free Jina.
-   * Body: { endpoint, apiKey, url, max_characters?, model? }
+   * Fetch page via Jina Reader (r.jina.ai). Optional allowNativeRaw.
+   * Body: { url, max_characters?, jinaApiKey?, allowNativeRaw? }
    */
   app.post("/api/web/fetch", async (req, res) => {
     try {
@@ -238,12 +253,10 @@ if (require.main === module) {
       const url = b.url || "";
       if (!url) return res.status(400).json({ error: "url required" });
       const out = await webClient.fetchPage({
-        endpoint: b.endpoint || "http://127.0.0.1:20128/v1",
-        apiKey: b.apiKey || "",
         url,
         max_characters: b.max_characters != null ? b.max_characters : 6000,
-        model: b.model || null,
-        allowJinaFree: b.allowJinaFree !== false
+        jinaApiKey: resolveJinaKey(b.jinaApiKey),
+        allowNativeRaw: !!b.allowNativeRaw
       });
       res.json(out);
     } catch (e) {
@@ -253,44 +266,35 @@ if (require.main === module) {
   });
 
   /**
-   * Multi-query research pack: 9r search → free news; optional page fetches.
+   * Multi-query research pack: Jina search → free news gap-fill; optional page fetches.
+   * Native model tools run in the browser (hybridResearchSearch), not here.
    */
   app.post("/api/web/research", async (req, res) => {
     try {
       const b = req.body || {};
       const queries = Array.isArray(b.queries) ? b.queries : b.query ? [b.query] : [];
       if (!queries.length) return res.status(400).json({ error: "queries required" });
-      const endpoint = b.endpoint || "";
-      const apiKey = b.apiKey || "";
+      const jinaApiKey = resolveJinaKey(b.jinaApiKey);
       const fetchPages = !!b.fetchPages;
       const fetchLimit = Math.min(5, Math.max(0, parseInt(b.fetchLimit || "4", 10)));
       const maxPerQuery = Math.min(8, Math.max(1, parseInt(b.max_results || "4", 10)));
 
-      const allHits = [];
-      let used9rSearch = false;
-      let usedFreeNews = false;
-      const layerErrors = [];
+      const pack = await webClient.researchPack({
+        queries,
+        max_results: maxPerQuery,
+        jinaApiKey,
+        fetchPages: fetchPages && fetchLimit > 0,
+        fetchLimit,
+        max_characters: b.max_characters || 6000
+      });
 
-      for (const query of queries.slice(0, 12)) {
-        let got = false;
-        if (endpoint) {
-          const s = await webClient.searchVia9Router({
-            endpoint,
-            apiKey,
-            query,
-            max_results: maxPerQuery,
-            search_type: b.search_type || "news",
-            model: b.searchModel || null
-          });
-          if (s.ok && s.results.length) {
-            used9rSearch = true;
-            for (const r of s.results) allHits.push({ ...r, query });
-            got = true;
-          } else if (s.errors?.length) {
-            layerErrors.push(...s.errors.slice(0, 2));
-          }
-        }
-        if (!got) {
+      const allHits = [...(pack.results || [])];
+      let usedFreeNews = false;
+      const layerErrors = [...(pack.errors || [])];
+
+      // Gap-fill with free Google News RSS when Jina thin/empty
+      if (allHits.length < 2) {
+        for (const query of queries.slice(0, 12)) {
           try {
             const news = await marketApi.ddgSearch(query, maxPerQuery);
             if (news.length) {
@@ -312,7 +316,6 @@ if (require.main === module) {
         }
       }
 
-      // dedupe
       const seen = new Set();
       const results = allHits.filter((r) => {
         const k = (r.url || "") + "|" + String(r.title || "").slice(0, 60);
@@ -321,38 +324,36 @@ if (require.main === module) {
         return true;
       });
 
-      let pages = [];
-      let used9rFetch = false;
-      let usedJina = false;
-      if (fetchPages && fetchLimit > 0 && results.length) {
-        const pack = await webClient.fetchTopFromHits({
-          endpoint: endpoint || "http://127.0.0.1:20128/v1",
-          apiKey,
+      // If we still need pages and only news hits existed, fetch now
+      let pages = pack.pages || [];
+      let usedJinaFetch = !!pack.usedJinaFetch;
+      if (fetchPages && fetchLimit > 0 && pages.length === 0 && results.length) {
+        const more = await webClient.fetchTopFromHits({
           hits: results,
           limit: fetchLimit,
           max_characters: b.max_characters || 6000,
-          fetchModel: b.fetchModel || null
+          jinaApiKey
         });
-        pages = pack.pages;
-        used9rFetch = pack.used9rFetch;
-        usedJina = pack.usedJina;
+        pages = more.pages;
+        usedJinaFetch = more.usedJinaFetch;
       }
 
-      const layers = [];
-      if (used9rSearch) layers.push("9r-search");
-      if (usedFreeNews) layers.push("news-rss");
-      if (used9rFetch) layers.push("9r-fetch");
-      if (usedJina) layers.push("jina-free");
+      const layer = mergeLayerLabel({
+        usedNative: false,
+        usedJinaSearch: !!pack.usedJinaSearch,
+        usedJinaFetch,
+        usedFreeNews
+      });
 
       res.json({
         ok: results.length > 0 || pages.length > 0,
         results,
         pages,
-        layer: layers.join("+") || "none",
-        used9rSearch,
+        layer,
+        usedJinaSearch: !!pack.usedJinaSearch,
         usedFreeNews,
-        used9rFetch,
-        usedJina,
+        usedJinaFetch,
+        hasJinaKey: !!jinaApiKey,
         errors: layerErrors.slice(0, 8)
       });
     } catch (e) {

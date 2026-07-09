@@ -14,10 +14,13 @@ export const DEFAULT_SETTINGS = {
   shortlistK: 8,
   maxIngest: 0,
   forceRefresh: false,
+  /** Prefer xAI web_search / Gemini google_search before Jina+news. */
   preferNativeSearch: true,
-  /** 9Router web provider ids (optional). Empty = try free-friendly candidates. */
-  searchProvider: "",
-  fetchProvider: "",
+  /**
+   * Optional Jina key for browser→server body (overrides empty server env).
+   * Prefer server .env JINA_API_KEY so the key never leaves localStorage if not needed.
+   */
+  jinaApiKey: "",
   tavilyApiKey: "",
   reasoningKeywords: "qwen, deepseek-r1, o1, o3, reasoning, thinking, kimi, qwq",
   searchModeOverride: "auto"

@@ -80,6 +80,7 @@ function bindSettingsForm() {
   if ($("custom-endpoint")) $("custom-endpoint").value = s.customEndpoint || "";
   if ($("custom-api-key")) $("custom-api-key").value = s.customApiKey || "";
   if ($("use-cors-proxy")) $("use-cors-proxy").checked = !!s.useCorsProxy;
+  if ($("jina-api-key")) $("jina-api-key").value = s.jinaApiKey || "";
   // selects filled by applyModelsToSelects after catalog load
   if ($("shortlist-k")) $("shortlist-k").value = s.shortlistK || 8;
   if ($("max-ingest")) $("max-ingest").value = s.maxIngest || 0;
@@ -122,6 +123,7 @@ function readSettingsFromForm() {
     customEndpoint: $("custom-endpoint")?.value?.trim() || "",
     customApiKey: $("custom-api-key")?.value?.trim() || "",
     useCorsProxy: !!$("use-cors-proxy")?.checked,
+    jinaApiKey: $("jina-api-key")?.value?.trim() || "",
     shortlistK: parseInt($("shortlist-k")?.value || "8", 10),
     maxIngest: parseInt($("max-ingest")?.value || "0", 10),
     forceRefresh: !!$("force-refresh")?.checked,

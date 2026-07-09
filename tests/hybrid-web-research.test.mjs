@@ -1,40 +1,52 @@
 /**
- * Exercises server /api/web/research entry (same path UI uses via hybrid).
- * Forces 9router fail (bad endpoint) and asserts free news path still returns structure.
+ * Hybrid path pieces: Jina research + free news gap-fill (no 9Router).
  */
 import assert from "assert";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
-// Direct unit: research helper pieces via client + marketApi news
+// load .env like server does
+const fs = require("fs");
+const path = require("path");
+try {
+  const envPath = path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".env");
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const eq = t.indexOf("=");
+      if (eq < 1) continue;
+      const k = t.slice(0, eq).trim();
+      let v = t.slice(eq + 1).trim();
+      if (
+        (v.startsWith('"') && v.endsWith('"')) ||
+        (v.startsWith("'") && v.endsWith("'"))
+      ) {
+        v = v.slice(1, -1);
+      }
+      if (k && process.env[k] == null) process.env[k] = v;
+    }
+  }
+} catch {
+  /* */
+}
+
 const marketApi = require("../lib/market-api.js");
-const webClient = require("../lib/ninerouter-web-client.js");
-const core = require("../lib/ninerouter-web-core.js");
+const webClient = require("../lib/web-client.js");
+const core = require("../lib/web-core.js");
 
-// 1) Forced 9r search fail → empty → news can still work
-const failed = await webClient.searchVia9Router({
-  endpoint: "http://127.0.0.1:1/v1",
-  apiKey: "bad",
-  query: "IHSG saham",
-  max_results: 3
-});
-assert.strictEqual(failed.ok, false);
-
-// free news path (market-api ddgSearch = Google News RSS)
+// 1) free news path still works
 const news = await marketApi.ddgSearch("IHSG saham", 3);
 assert.ok(Array.isArray(news));
-// may be 0 in offline CI — still assert shape when non-empty
 for (const r of news) {
   assert.ok("title" in r || "url" in r);
 }
 
-// Simulate hybrid merge label
 const layer = core.mergeLayerLabel({
-  used9rSearch: false,
-  used9rFetch: false,
-  usedFreeNews: news.length > 0,
-  usedJina: false,
-  usedNative: false
+  usedNative: false,
+  usedJinaSearch: false,
+  usedJinaFetch: false,
+  usedFreeNews: news.length > 0
 });
 if (news.length > 0) {
   assert.ok(layer.includes("news-rss"));
@@ -42,17 +54,15 @@ if (news.length > 0) {
   assert.strictEqual(layer, "none");
 }
 
-// 2) Successful normalize of recorded 9r search shape → agent-consumable fields
+// 2) Jina search normalize unit
 const recorded = core.normalizeSearchResponse(
   {
-    provider: "tavily",
-    query: "BBCA saham",
-    results: [
+    code: 200,
+    data: [
       {
         title: "BBCA naik",
         url: "https://example.com/bbca",
-        snippet: "Bank Central Asia",
-        score: 0.9
+        description: "Bank Central Asia"
       }
     ]
   },
@@ -60,33 +70,39 @@ const recorded = core.normalizeSearchResponse(
 );
 assert.strictEqual(recorded.results[0].title, "BBCA naik");
 assert.strictEqual(recorded.results[0].url, "https://example.com/bbca");
-assert.ok(recorded.results[0].snippet.includes("Bank"));
 
-// 3) Fetch normalize + jina free live
-const fetchNorm = core.normalizeFetchResponse({
-  provider: "jina-reader",
-  url: "https://example.com",
-  title: "Ex",
-  content: { format: "markdown", text: "Fetched body content for deep dive analysis path." }
-});
-assert.strictEqual(fetchNorm.ok, true);
-assert.ok(fetchNorm.text.includes("Fetched body"));
-
+// 3) live fetch via Jina
 const live = await webClient.fetchPage({
-  endpoint: "http://127.0.0.1:1/v1",
-  apiKey: "",
   url: "https://example.com",
-  allowJinaFree: true
+  jinaApiKey: process.env.JINA_API_KEY || "",
+  max_characters: 3000
 });
 assert.strictEqual(live.ok, true, live.error);
 assert.ok(live.text.length > 10);
 
-// 4) pickTopUrls used for deep-dive fetch selection
+// 4) research pack (with key if present)
+const pack = await webClient.researchPack({
+  queries: ["IHSG hari ini"],
+  max_results: 3,
+  jinaApiKey: process.env.JINA_API_KEY || "",
+  fetchPages: false
+});
+assert.ok(Array.isArray(pack.results));
+assert.ok(Array.isArray(pack.errors));
+
+// 5) pickTopUrls
 const tops = core.pickTopUrls(recorded.results, 2);
 assert.deepStrictEqual(tops, ["https://example.com/bbca"]);
+
+// 6) 9router alias is disabled stub
+const dead = await webClient.searchVia9Router({});
+assert.strictEqual(dead.ok, false);
+assert.ok(dead.errors.some((e) => /9router_disabled/i.test(e)));
 
 console.log("hybrid-web-research.test.mjs OK", {
   newsHits: news.length,
   layer,
-  jinaLayer: live.layer
+  jinaLayer: live.layer,
+  packHits: pack.results.length,
+  usedJinaSearch: pack.usedJinaSearch
 });
