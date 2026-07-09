@@ -113,9 +113,13 @@ export async function runAnalysis({
   const model = modelFor("analysis");
   onLog?.(`Analysis model=${model} · analyse + verify/crosscheck · temp=omit`);
 
-  // Optional clarify search for holes before main analysis
+  // Optional clarify — skip if research already thin/failed (save router budget)
   let clarifications = [];
-  if (searchMode !== "DEGRADED") {
+  const researchThin =
+    (research?.findings || []).length < 2 ||
+    research?.agentMeta?.mode === "agentic_salvage" ||
+    research?.agentMeta?.mode === "error_fallback";
+  if (searchMode !== "DEGRADED" && !researchThin) {
     clarifications = await runAnalysisClarify({
       shortlistPack,
       research,
@@ -124,6 +128,11 @@ export async function runAnalysis({
       signal,
       onLog
     });
+  } else if (researchThin) {
+    onLog?.(
+      "Analysis skip clarify web (research tipis) — langsung thesis dari hard+research",
+      "warn"
+    );
   }
 
   const schema = briefingSchema(runId, shortlistPack.day, searchMode);
@@ -145,30 +154,55 @@ export async function runAnalysis({
           day: shortlistPack.day,
           note:
             "Field metrics/context = FAKTA referensi diam-diam. Narasi = makna + insight, bukan dump angka. " +
-            "Lakukan verifikasi & crosscheck. Cari hidden context & yang dilewat research.",
+            "Lakukan verifikasi & crosscheck. Cari hidden context & yang dilewat research. JSON murni.",
           marketRegime: shortlistPack.marketRegime,
           ihsg: {
             close: shortlistPack.ihsg?.close,
             changePct: shortlistPack.ihsg?.changePct,
-            context: shortlistPack.ihsg?.context
+            // compact context only
+            contextSummary: shortlistPack.ihsg?.context?.summary,
+            volTrend: shortlistPack.ihsg?.context?.vol?.volumeTrend,
+            m1: shortlistPack.ihsg?.context?.m1
+              ? {
+                  retPct: shortlistPack.ihsg.context.m1.retPct,
+                  structure: shortlistPack.ihsg.context.m1.structure
+                }
+              : null
           },
           breadth: shortlistPack.breadth,
-          globals: (shortlistPack.globals || []).map((g) => ({
+          globals: (shortlistPack.globals || []).slice(0, 8).map((g) => ({
             label: g.label,
-            changePct: g.changePct,
-            contextSummary: g.context?.summary
+            changePct: g.changePct
           })),
           shortlist: (shortlistPack.shortlist || []).map((s) => ({
             ticker: s.ticker,
             whySelected: s.whySelected,
-            metrics: s.metrics,
-            context: s.context,
+            metrics: {
+              close: s.metrics?.close,
+              changePct: s.metrics?.changePct ?? s.metrics?.ret1dPct,
+              rvol: s.metrics?.rvol,
+              zRet: s.metrics?.zRet ?? s.metrics?.returnZ
+            },
+            structure:
+              s.context?.m1?.structure || s.context?.w1?.structure || null,
+            m1Ret: s.context?.m1?.retPct,
+            volTrend: s.context?.vol?.volumeTrend,
             vsIhsg: s.vsIhsg,
             flowHints: s.flowHints
           })),
-          research,
+          research: {
+            macroNote: research?.macroNote,
+            macroOutlookTag: research?.macroOutlookTag,
+            hotTakes: research?.hotTakes,
+            unexplainedMarket: research?.unexplainedMarket,
+            searchPlan: (research?.searchPlan || []).slice(0, 12),
+            findings: (research?.findings || []).slice(0, 24),
+            marketNotes: (research?.marketNotes || []).slice(0, 12),
+            perTicker: research?.perTicker,
+            agentMeta: research?.agentMeta
+          },
           clarificationsFromWeb: clarifications,
-          memoryRecent: memory
+          memoryRecent: (memory || []).slice(0, 4)
         },
         null,
         2

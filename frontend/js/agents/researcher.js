@@ -221,17 +221,35 @@ done HANYA jika: market+macro ada temuan DAN (mayoritas ticker ≥1 finding ATAU
             query: ""
           }));
         }
-        onLog?.(
-          `Researcher OK agentic rounds=${agentic.rounds} reason=${agentic.reasoningEffort || "off"} cites=${(agentic.citations || []).length} findings=${(parsed.findings || []).length}`
-        );
-        return normalizeResearch(parsed, shortlistPack, {
-          mode: parsed.unexplainedMarket?.includes?.("agentic_output_not_json")
-            ? "agentic_salvage"
-            : "agentic_native",
-          reasoningEffort: agentic.reasoningEffort,
-          rounds: agentic.rounds,
-          citations: agentic.citations
-        });
+        const nFindings = (parsed.findings || []).length;
+        const isSalvage =
+          parsed.unexplainedMarket?.includes?.("agentic_output_not_json") ||
+          nFindings < 3;
+        // Thin/non-JSON salvage: jangan anggap OK — tambah hybrid hits
+        if (isSalvage) {
+          onLog?.(
+            `Researcher agentic tipis/salvage findings=${nFindings} → hybrid supplement`,
+            "warn"
+          );
+          // stash partial for merge after hybrid
+          shortlistPack.__agenticPartial = parsed;
+          shortlistPack.__agenticMeta = {
+            mode: "agentic_salvage",
+            reasoningEffort: agentic.reasoningEffort,
+            rounds: agentic.rounds,
+            citations: agentic.citations
+          };
+        } else {
+          onLog?.(
+            `Researcher OK agentic rounds=${agentic.rounds} reason=${agentic.reasoningEffort || "off"} cites=${(agentic.citations || []).length} findings=${nFindings}`
+          );
+          return normalizeResearch(parsed, shortlistPack, {
+            mode: "agentic_native",
+            reasoningEffort: agentic.reasoningEffort,
+            rounds: agentic.rounds,
+            citations: agentic.citations
+          });
+        }
       }
     } else {
       onLog?.(`Researcher native gagal → hybrid: ${agentic.error || "—"}`, "warn");
@@ -256,6 +274,21 @@ done HANYA jika: market+macro ada temuan DAN (mayoritas ticker ≥1 finding ATAU
     onLog?.(`Researcher hybrid hits=${searchResults.length} layer=${hybrid.layer}`);
   }
 
+  // merge agentic partial findings into hybrid results
+  const partial = shortlistPack.__agenticPartial;
+  if (partial?.findings?.length) {
+    for (const f of partial.findings) {
+      searchResults.push({
+        title: f.claim || "",
+        snippet: f.claim || "",
+        url: f.url || "",
+        provider: "agentic-partial",
+        query: f.query || ""
+      });
+    }
+  }
+  delete shortlistPack.__agenticPartial;
+
   try {
     const out = await chatJson({
       model,
@@ -267,8 +300,21 @@ done HANYA jika: market+macro ada temuan DAN (mayoritas ticker ≥1 finding ATAU
             note:
               searchMode === "DEGRADED"
                 ? "Tanpa web. Jangan mengarang berita."
-                : "Rangkum searchResults jadi research pack. Hot takes boleh tajam.",
-            searchResults: searchResults.slice(0, 60)
+                : "Rangkum searchResults jadi research pack. Hot takes boleh tajam. Output JSON murni.",
+            agenticPartial: partial
+              ? {
+                  macroNote: partial.macroNote,
+                  hotTakes: partial.hotTakes,
+                  findings: (partial.findings || []).slice(0, 20)
+                }
+              : null,
+            searchResults: searchResults.slice(0, 50).map((r) => ({
+              title: r.title,
+              snippet: String(r.snippet || "").slice(0, 280),
+              url: r.url,
+              query: r.query,
+              provider: r.provider
+            }))
           },
           null,
           2
@@ -278,9 +324,18 @@ done HANYA jika: market+macro ada temuan DAN (mayoritas ticker ≥1 finding ATAU
       reasoningEffort: "auto",
       onLog
     });
+    const meta = shortlistPack.__agenticMeta || {};
+    delete shortlistPack.__agenticMeta;
     return normalizeResearch(out, shortlistPack, {
-      mode: searchMode === "DEGRADED" ? "degraded" : "hybrid_pack",
-      reasoningEffort: out.__meta?.reasoningEffort
+      mode:
+        searchMode === "DEGRADED"
+          ? "degraded"
+          : meta.mode === "agentic_salvage"
+            ? "agentic_plus_hybrid"
+            : "hybrid_pack",
+      reasoningEffort: out.__meta?.reasoningEffort || meta.reasoningEffort,
+      rounds: meta.rounds,
+      citations: meta.citations
     });
   } catch (e) {
     onLog?.("Researcher LLM gagal: " + e.message, "err");

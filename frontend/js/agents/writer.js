@@ -179,8 +179,8 @@ export async function runWriter({
           },
           researchPunch: {
             macroNote: research?.macroNote,
-            hotTakes: research?.hotTakes,
-            unexplainedMarket: research?.unexplainedMarket
+            hotTakes: (research?.hotTakes || []).slice(0, 5),
+            unexplainedMarket: (research?.unexplainedMarket || []).slice(0, 6)
           },
           analysisDraft: stripForWriter(analysis)
         },
