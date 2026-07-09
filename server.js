@@ -141,11 +141,33 @@ if (require.main === module) {
     }
   });
 
+  /**
+   * Refresh universe.
+   * Body: { mode?: "quick"|"sample"|"full", validate?: boolean, maxValidate?: number }
+   * Default = quick (seed only) so browser never hangs with Failed to fetch.
+   */
   app.post("/api/market/universe/refresh", async (req, res) => {
+    // Long-running full validate may need client patience; disable socket timeout for this req
     try {
-      const validate = req.body?.validate !== false;
-      const maxValidate = req.body?.maxValidate != null ? parseInt(req.body.maxValidate, 10) : 0;
-      const result = await marketApi.refreshUniverse({ validate, maxValidate });
+      req.setTimeout?.(0);
+      res.setTimeout?.(0);
+    } catch {
+      /* */
+    }
+    try {
+      const b = req.body || {};
+      let mode = b.mode || null;
+      if (!mode) {
+        if (b.validate === false || b.validate === "false") mode = "quick";
+        else if (b.validate === true && (b.maxValidate === 0 || b.maxValidate === "0")) mode = "full";
+        else if (b.validate === true) mode = "sample";
+        else mode = "quick"; // safe default
+      }
+      const maxValidate =
+        b.maxValidate != null ? parseInt(b.maxValidate, 10) : mode === "sample" ? 80 : 0;
+      const validate = mode !== "quick";
+      console.log(`[universe/refresh] mode=${mode} validate=${validate} max=${maxValidate}`);
+      const result = await marketApi.refreshUniverse({ validate, maxValidate, mode });
       res.json(result);
     } catch (e) {
       console.error("[universe/refresh]", e);

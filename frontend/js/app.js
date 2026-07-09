@@ -284,32 +284,98 @@ function init() {
     /* */
   }
 
-  $("btn-fetch-tickers")?.addEventListener("click", async () => {
+  async function refreshUniverseUi(mode = "quick") {
     const st = $("tickers-status");
-    const btn = $("btn-fetch-tickers");
-    if (btn) btn.disabled = true;
-    if (st) st.textContent = "Refreshing universe (validate Yahoo)…";
+    const buttons = [
+      $("btn-fetch-tickers"),
+      $("btn-fetch-tickers-sample"),
+      $("btn-fetch-tickers-full")
+    ].filter(Boolean);
+    buttons.forEach((b) => (b.disabled = true));
+    const labels = {
+      quick: "Seed merge (tanpa Yahoo)…",
+      sample: "Seed + sample Yahoo (~80)…",
+      full: "Full Yahoo validate (bisa lama)…"
+    };
+    if (st) st.textContent = labels[mode] || "Refreshing…";
+    setStatus(`Universe ${mode}…`, "busy");
+    logLine(`Universe refresh mode=${mode}`);
+
+    // Health check first — clearer than opaque Failed to fetch
+    try {
+      const h = await fetch("/api/health", { cache: "no-store" });
+      if (!h.ok) throw new Error("server health " + h.status);
+    } catch (e) {
+      const msg =
+        "Server tidak terjangkau (" +
+        (e.message || "Failed to fetch") +
+        "). Pastikan npm run dev di :3010.";
+      if (st) st.textContent = "Gagal: " + msg;
+      logLine("universe refresh: " + msg, "err");
+      setStatus("Refresh tickers gagal — server down?", "err");
+      buttons.forEach((b) => (b.disabled = false));
+      return;
+    }
+
+    const ctrl = new AbortController();
+    // quick ~30s, sample ~3min, full ~20min
+    const timeoutMs = mode === "full" ? 20 * 60_000 : mode === "sample" ? 3 * 60_000 : 45_000;
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
     try {
       const res = await fetch("/api/market/universe/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ validate: true, maxValidate: 0 })
+        body: JSON.stringify({
+          mode,
+          validate: mode !== "quick",
+          maxValidate: mode === "sample" ? 80 : mode === "full" ? 0 : 0
+        }),
+        signal: ctrl.signal,
+        cache: "no-store"
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      if (st) {
-        st.textContent = `${data.count} tickers · removed ${data.meta?.removedCount || 0} · ${data.refreshedAt || ""}`;
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t.slice(0, 200) || `HTTP ${res.status}`);
       }
-      logLine(`Universe refresh: ${data.count} tickers, removed ${data.meta?.removedCount || 0}`);
+      const data = await res.json();
+      const warn = data.meta?.yahooSuspectDown ? " · Yahoo lemah (list dijaga)" : "";
+      if (st) {
+        st.textContent = `${data.count} tickers · mode ${data.meta?.mode || mode} · removed ${data.meta?.removedCount || 0}${warn}`;
+      }
+      logLine(
+        `Universe OK: ${data.count} tickers · removed ${data.meta?.removedCount || 0} · mode=${data.meta?.mode || mode}${warn}`
+      );
       setStatus(`Universe: ${data.count} emiten`, "ok");
       await loadUniverseBrowser();
     } catch (e) {
-      if (st) st.textContent = "Gagal: " + e.message;
-      logLine("universe refresh: " + e.message, "err");
+      let msg = e.message || String(e);
+      if (e.name === "AbortError") {
+        msg = `Timeout ${Math.round(timeoutMs / 1000)}s — coba Quick, atau Sample (bukan Full).`;
+      } else if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+        msg =
+          "Failed to fetch — server putus/timeout. Pakai Refresh quick; Full validate sangat lama.";
+      }
+      if (st) st.textContent = "Gagal: " + msg;
+      logLine("universe refresh: " + msg, "err");
       setStatus("Refresh tickers gagal", "err");
     } finally {
-      if (btn) btn.disabled = false;
+      clearTimeout(timer);
+      buttons.forEach((b) => (b.disabled = false));
     }
+  }
+
+  $("btn-fetch-tickers")?.addEventListener("click", () => refreshUniverseUi("quick"));
+  $("btn-fetch-tickers-sample")?.addEventListener("click", () => refreshUniverseUi("sample"));
+  $("btn-fetch-tickers-full")?.addEventListener("click", () => {
+    if (
+      !window.confirm(
+        "Full validate mengecek SEMUA ticker lewat Yahoo (bisa 5–15+ menit).\n\nLanjut? Lebih aman pakai Quick atau Sample."
+      )
+    ) {
+      return;
+    }
+    refreshUniverseUi("full");
   });
 
   // universe browser + storage library
