@@ -7,6 +7,7 @@ const { isAllowedProxyTarget, normalizeProxyTarget } = require("./api/proxy-allo
 const marketApi = require("./lib/market-api.js");
 const webClient = require("./lib/web-client.js");
 const { mergeLayerLabel } = require("./lib/web-core.js");
+const tickerUtil = require("./lib/ticker-util.js");
 
 /** Load gitignored .env into process.env (no dotenv dep). */
 function loadDotEnv() {
@@ -195,14 +196,12 @@ if (require.main === module) {
   /** Single-ticker pack for deep dive (1y context + IHSG regime) */
   app.get("/api/market/ticker/:code", async (req, res) => {
     try {
-      const code = String(req.params.code || "")
-        .toUpperCase()
-        .replace(/\.JK$/i, "");
-      if (!/^[A-Z]{3,4}$/.test(code)) {
-        return res.status(400).json({ error: "ticker invalid (3-4 huruf)" });
+      const parsed = tickerUtil.parseTicker(req.params.code || "");
+      if (!parsed.ok) {
+        return res.status(400).json({ error: parsed.error, ticker: parsed.ticker });
       }
       const force = req.query.force === "1";
-      const pack = await marketApi.getTickerPack(code, { force });
+      const pack = await marketApi.getTickerPack(parsed.ticker, { force });
       res.json(pack);
     } catch (e) {
       console.error("[ticker]", e);

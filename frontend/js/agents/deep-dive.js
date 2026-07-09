@@ -328,7 +328,7 @@ export async function runDeepDiveAgent({
       user: JSON.stringify(hard, null, 2),
       signal,
       onLog,
-      maxRounds: 4,
+      maxRounds: 7,
       unrestrictedWeb: true,
       temperature: null,
       reasoningEffort: "auto",

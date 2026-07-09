@@ -27,11 +27,85 @@ import {
 } from "./agent-memory.js";
 import { isOnline } from "./offline-store.js";
 import { saveGeneratedDoc } from "./storage-store.js";
+import { parseTicker } from "./ticker-util.js";
+import { clearSessionProgress } from "./offline-store.js";
+import { clearLocalRunMemory } from "./agent-memory.js";
 
 let abortCtrl = null;
+let activeRunId = null;
+
+export function getActiveRunId() {
+  return activeRunId;
+}
 
 export function abortRun() {
   if (abortCtrl) abortCtrl.abort();
+}
+
+/**
+ * Abort in-flight + reset sesi (progress, UI, resume) agar bisa ulang dari awal.
+ * @param {{ wipeLog?: boolean, clearLastBriefing?: boolean }} opts
+ */
+export async function abortAndResetSession(opts = {}) {
+  const wipeLog = opts.wipeLog !== false;
+  const clearLast = opts.clearLastBriefing !== false;
+
+  abortRun();
+  abortCtrl = null;
+  const prev = activeRunId;
+  activeRunId = null;
+
+  try {
+    if (prev) await markRunFailed(prev, "aborted_reset", logLine);
+  } catch {
+    /* */
+  }
+
+  try {
+    await clearSessionProgress({ clearLastBriefing: clearLast });
+  } catch (e) {
+    logLine("clearSessionProgress: " + (e.message || e), "warn");
+  }
+  try {
+    clearLocalRunMemory();
+  } catch {
+    /* */
+  }
+
+  // Live UI reset
+  window.__lastBriefing = null;
+  window.__lastRunId = null;
+  const reportEl = document.getElementById("report-view");
+  if (reportEl) {
+    reportEl.innerHTML =
+      '<p class="fineprint muted">Sesi di-reset. Jalankan briefing / deep dive baru.</p>';
+  }
+  const sl = document.getElementById("shortlist-table");
+  if (sl) sl.innerHTML = "";
+  const kpis = ["kpi-ihsg", "kpi-breadth", "kpi-coverage", "kpi-lean"];
+  // leave KPIs; optional soft clear lean
+  const lean = document.getElementById("kpi-lean");
+  if (lean) lean.textContent = "—";
+
+  document.getElementById("resume-banner")?.classList.add("hidden");
+  document.getElementById("btn-resume")?.classList.add("hidden");
+  document.getElementById("btn-resume-m")?.classList.add("hidden");
+
+  if (wipeLog) {
+    const stream = document.getElementById("log-stream");
+    if (stream) stream.innerHTML = "";
+  }
+
+  setStatus("Sesi di-reset — siap ulang dari awal", "ok");
+  logLine(
+    prev
+      ? `Abort + reset sesi (run ${prev} dibatalkan, progress dihapus)`
+      : "Abort + reset sesi (progress & live view dibersihkan)",
+    "warn"
+  );
+
+  refreshResumeBanner?.();
+  return { ok: true, abortedRunId: prev };
 }
 
 /**
@@ -46,6 +120,7 @@ export async function runPipeline({ skipAi = false, resumeRunId = null } = {}) {
   const signal = abortCtrl.signal;
 
   let runId = resumeRunId || `run_${Date.now()}`;
+  activeRunId = runId;
   const k = appSettings.shortlistK || 8;
   const force = !!appSettings.forceRefresh;
   const max = appSettings.maxIngest > 0 ? appSettings.maxIngest : undefined;
@@ -325,25 +400,38 @@ export async function runDeepDive(tickerRaw) {
   if (abortCtrl) abortCtrl.abort();
   abortCtrl = new AbortController();
   const signal = abortCtrl.signal;
-  const ticker = String(tickerRaw || "")
-    .toUpperCase()
-    .replace(/\.JK$/i, "")
-    .trim();
-  if (!/^[A-Z]{3,4}$/.test(ticker)) {
-    setStatus("Ticker invalid (3–4 huruf)", "err");
-    logLine("Deep dive: ticker invalid " + tickerRaw, "err");
+
+  const parsed = parseTicker(tickerRaw);
+  if (!parsed.ok) {
+    setStatus(parsed.error || "Ticker tidak valid", "err");
+    logLine("Deep dive: " + (parsed.error || "ticker tidak valid"), "err");
     return null;
   }
+  const ticker = parsed.ticker;
+
+  // keep input field clean
+  const deepInput = document.getElementById("deep-ticker");
+  if (deepInput) deepInput.value = ticker;
 
   const runId = `deep_${ticker}_${Date.now()}`;
+  activeRunId = runId;
   try {
     await initAgentMemory(logLine);
 
     setStatus(`Deep dive ${ticker}: data…`, "busy");
     logLine(`Deep dive start ${ticker} runId=${runId}`);
 
-    const packRes = await fetch(`/api/market/ticker/${ticker}`, { signal });
-    if (!packRes.ok) throw new Error(await packRes.text());
+    const packRes = await fetch(`/api/market/ticker/${encodeURIComponent(ticker)}`, { signal });
+    if (!packRes.ok) {
+      let errText = await packRes.text();
+      try {
+        const j = JSON.parse(errText);
+        errText = j.error || errText;
+      } catch {
+        /* */
+      }
+      throw new Error(errText || `HTTP ${packRes.status}`);
+    }
     const marketPack = await packRes.json();
     logLine(
       `Data ${ticker}: ${marketPack.stock?.context?.summary || "ok"} · regime ${marketPack.marketRegime?.tag || "?"}`

@@ -146,8 +146,7 @@ export async function runResearcher({
       user: JSON.stringify(hardUser, null, 2),
       signal,
       onLog,
-      // e9c37be used 3 — 6+ rounds of web_search often ends Failed to fetch (proxy/drop)
-      maxRounds: 3,
+      maxRounds: 6,
       unrestrictedWeb: true,
       temperature: null,
       reasoningEffort: "auto",

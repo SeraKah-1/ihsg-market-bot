@@ -3,6 +3,7 @@ import {
   runPipeline,
   runDeepDive,
   abortRun,
+  abortAndResetSession,
   downloadHtml,
   downloadJson,
   resumePipeline,
@@ -333,7 +334,24 @@ function init() {
   $("btn-run-m")?.addEventListener("click", runFull);
   $("btn-run-data")?.addEventListener("click", runData);
   $("btn-run-data-m")?.addEventListener("click", runData);
-  $("btn-abort")?.addEventListener("click", () => abortRun());
+  $("btn-abort")?.addEventListener("click", async () => {
+    const ok = window.confirm(
+      "Abort & reset sesi?\n\n• Hentikan run yang sedang jalan\n• Hapus progress / resume\n• Bersihkan report live\n\nStorage library (Briefings/Deep Dives) tidak dihapus.\nBisa ulang dari awal."
+    );
+    if (!ok) return;
+    // stop busy buttons
+    ["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m", "btn-deep-dive", "btn-resume", "btn-resume-m"].forEach(
+      (id) => {
+        const b = $(id);
+        if (b) b.disabled = false;
+      }
+    );
+    await abortAndResetSession({ wipeLog: true, clearLastBriefing: true });
+    pendingResumeRunId = null;
+    await refreshResumeUi();
+    setStatus("Sesi di-reset — siap ulang", "ok");
+  });
+  $("btn-abort-m")?.addEventListener("click", () => $("btn-abort")?.click());
   $("btn-dl-json")?.addEventListener("click", () => downloadJson());
   $("btn-dl-html")?.addEventListener("click", () => downloadHtml());
 

@@ -23,7 +23,7 @@ export async function runAgenticNativeLoop({
   user,
   signal = null,
   onLog = null,
-  maxRounds = 3,
+  maxRounds = 4,
   unrestrictedWeb = true,
   temperature: _temperature = null,
   reasoningEffort = "auto",
@@ -173,22 +173,8 @@ Jika sudah cukup, status=done.`);
       } findings=${parsed?.findings?.length ?? "—"}`
     );
 
-    // Non-JSON dump from tools: stop burning rounds (was 6× web_search → Failed to fetch)
-    if (!parsed && String(lastContent || "").length > 80) {
-      onLog?.(
-        `Agentic r${round}: non-JSON dump — stop early, biar outer salvage`,
-        "warn"
-      );
-      break;
-    }
-
-    const nFind = Array.isArray(parsed?.findings) ? parsed.findings.length : 0;
-    // Early final: cukup findings ATAU model bilang done (threshold longgar — e9c37be-friendly)
-    if (
-      !isFinal &&
-      ((parsed?.status === "done" && nFind >= 1) || nFind >= 4)
-    ) {
-      onLog?.("Gaps cukup — final JSON…");
+    if (!isFinal && parsed?.status === "done" && (parsed.findings || []).length >= 3) {
+      onLog?.("Gaps tertutup — final JSON…");
       const finalUser =
         `Temuan terakumulasi:\n${transcript.slice(0, 14000)}\n\n` +
         `Tulis JSON FINAL lengkap.\n` +

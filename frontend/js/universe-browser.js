@@ -3,6 +3,7 @@
  */
 import { logLine, setStatus, $ } from "./state.js";
 import { runDeepDive } from "./orchestrate.js";
+import { parseTicker } from "./ticker-util.js";
 import { openEmitenPanel } from "./storage-ui.js";
 import { listDocsForTicker } from "./storage-store.js";
 
@@ -151,7 +152,14 @@ export function renderUniverseBrowser() {
   host.querySelectorAll(".univ-deep").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const t = btn.getAttribute("data-ticker");
+      const raw = btn.getAttribute("data-ticker");
+      const parsed = parseTicker(raw);
+      if (!parsed.ok) {
+        setStatus(parsed.error, "err");
+        logLine(parsed.error, "err");
+        return;
+      }
+      const t = parsed.ticker;
       const deepInput = $("deep-ticker");
       if (deepInput) deepInput.value = t;
       btn.disabled = true;

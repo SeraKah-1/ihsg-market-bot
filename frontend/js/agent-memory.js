@@ -650,3 +650,17 @@ export async function finishRunMemory(runId, status = "done", onLog) {
     onLog?.("finishRun: " + e.message, "warn");
   }
 }
+
+/** Hapus jejak run lokal (localStorage prefix) saat abort/reset sesi */
+export function clearLocalRunMemory() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(LOCAL_RUN_PREFIX)) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    /* */
+  }
+}

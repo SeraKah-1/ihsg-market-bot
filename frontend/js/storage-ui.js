@@ -437,10 +437,10 @@ export async function openStorageDoc(id) {
 
 /** Emiten panel: list deep dives for ticker + run */
 export async function openEmitenPanel(ticker) {
-  const t = String(ticker || "")
-    .toUpperCase()
-    .replace(/\.JK$/i, "");
-  if (!/^[A-Z]{3,4}$/.test(t)) return;
+  const { parseTicker } = await import("./ticker-util.js");
+  const parsed = parseTicker(ticker);
+  if (!parsed.ok) return;
+  const t = parsed.ticker;
   emitenTicker = t;
   const panel = $("emiten-panel");
   if (!panel) return;

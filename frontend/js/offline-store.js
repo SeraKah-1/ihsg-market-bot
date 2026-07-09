@@ -226,3 +226,32 @@ export function nextStepFromSteps(steps = {}) {
 export function isOnline() {
   return typeof navigator === "undefined" ? true : navigator.onLine;
 }
+
+/**
+ * Hapus progress run (incomplete + steps) + optional last briefing — reset sesi.
+ */
+export async function clearSessionProgress({ clearLastBriefing = true } = {}) {
+  const db = await openDb();
+  const tx = db.transaction([STORE_RUNS, STORE_STEPS, STORE_META], "readwrite");
+  const runs = tx.objectStore(STORE_RUNS);
+  const steps = tx.objectStore(STORE_STEPS);
+  const meta = tx.objectStore(STORE_META);
+
+  // Fire all ops in one transaction without intermediate await (IDB auto-commits otherwise)
+  runs.clear();
+  steps.clear();
+  if (clearLastBriefing) {
+    meta.delete("lastBriefing");
+  }
+
+  await txDone(tx);
+  db.close();
+
+  if (clearLastBriefing) {
+    try {
+      localStorage.removeItem("ihsg-last-briefing-meta");
+    } catch {
+      /* */
+    }
+  }
+}
