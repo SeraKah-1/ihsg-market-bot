@@ -459,6 +459,20 @@ table.data .ctx-cell {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+/* Report host — isolate from chrome */
+#report-view.report {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  padding: 0 !important;
+}
 
 .up { color: var(--up); }
 .down { color: var(--down); }

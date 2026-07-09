@@ -6,10 +6,12 @@ import { runPositive } from "./agents/positive.js";
 import { runJudge } from "./agents/judge.js";
 import {
   renderBriefingHtml,
+  renderDeepDiveHtml,
   buildExportHtml,
   updateKpisFromShortlist,
   injectReportStylesOnce
 } from "./render-report.js";
+import { deepDiveQueries, runDeepDiveAgent } from "./agents/deep-dive.js";
 
 let abortCtrl = null;
 
@@ -191,14 +193,25 @@ function renderShortlistTable(pack) {
       const flowChip = s.flowHints?.flowAlive
         ? `<span class="chip chip-flow">flow</span>`
         : "";
-      const ctx = s.context?.summary || "";
+      const ctx = s.context || {};
+      const ctxShort = [
+        ctx.d1?.retPct != null ? `1d ${fmtSigned(ctx.d1.retPct)}%` : null,
+        ctx.w1?.retPct != null ? `1w ${fmtSigned(ctx.w1.retPct)}%` : null,
+        ctx.w1?.structure ? ctx.w1.structure : null,
+        ctx.m1?.retPct != null ? `1m ${fmtSigned(ctx.m1.retPct)}%` : null
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const whyHtml = (s.whySelected || [])
+        .map((w) => `<span class="chip">${esc(w)}</span>`)
+        .join(" ");
       return `<tr>
       <td><span class="ticker">${esc(s.ticker)}</span></td>
       <td class="${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.metrics?.changePct)}%</td>
       <td>${fmt(s.metrics?.rvol)}</td>
-      <td class="ctx-cell" title="${esc(ctx)}">${esc(ctx || "—")}</td>
-      <td>${(s.whySelected || []).map((w) => `<span class="chip">${esc(w)}</span>`).join("")}</td>
-      <td><span class="chip ${riskClass}">${esc(risk)}</span>${flowChip}</td>
+      <td class="ctx-cell" title="${esc(ctx.summary || "")}">${esc(ctxShort || "—")}</td>
+      <td><div class="chip-row">${whyHtml || "—"}</div></td>
+      <td><div class="chip-row"><span class="chip ${riskClass}">${esc(risk)}</span> ${flowChip}</div></td>
     </tr>`;
     })
     .join("");
@@ -287,6 +300,152 @@ export function downloadHtml() {
   const blob = new Blob([full], { type: "text/html;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `briefing-${b.asOfSession || "run"}.html`;
+  const name =
+    b.kind === "deep_dive"
+      ? `deep-${b.ticker || "emiten"}-${b.asOfSession || "run"}.html`
+      : `briefing-${b.asOfSession || "run"}.html`;
+  a.download = name;
   a.click();
+}
+
+/**
+ * Deep dive one emiten: intensive search + single structured analysis.
+ */
+export async function runDeepDive(tickerRaw) {
+  loadSettings();
+  if (abortCtrl) abortCtrl.abort();
+  abortCtrl = new AbortController();
+  const signal = abortCtrl.signal;
+  const ticker = String(tickerRaw || "")
+    .toUpperCase()
+    .replace(/\.JK$/i, "")
+    .trim();
+  if (!/^[A-Z]{3,4}$/.test(ticker)) {
+    setStatus("Ticker invalid (3–4 huruf)", "err");
+    logLine("Deep dive: ticker invalid " + tickerRaw, "err");
+    return null;
+  }
+
+  const runId = `deep_${ticker}_${Date.now()}`;
+  try {
+    setStatus(`Deep dive ${ticker}: data…`, "busy");
+    logLine(`Deep dive start ${ticker}`);
+
+    const packRes = await fetch(`/api/market/ticker/${ticker}`, { signal });
+    if (!packRes.ok) throw new Error(await packRes.text());
+    const marketPack = await packRes.json();
+    logLine(
+      `Data ${ticker}: ${marketPack.stock?.context?.summary || "ok"} · regime ${marketPack.marketRegime?.tag || "?"}`
+    );
+
+    // update KPI lightly from pack
+    if (marketPack.ihsg) {
+      updateKpisFromShortlist({
+        ihsg: marketPack.ihsg,
+        breadth: { adv: "—", dec: "—", total: null },
+        dataQuality: { coveragePct: 100, fromCache: marketPack.fromCache }
+      });
+    }
+
+    const searchMode = detectSearchMode();
+    logLine(searchModeBanner(searchMode));
+    setStatus(`Deep dive ${ticker}: search…`, "busy");
+
+    let searchResults = [];
+    if (searchMode !== "DEGRADED") {
+      const queries = deepDiveQueries(ticker, marketPack.day);
+      for (const q of queries) {
+        if (signal.aborted) break;
+        try {
+          const res = await fetch("/api/search/ddg?q=" + encodeURIComponent(q) + "&n=5", {
+            signal
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+          for (const r of data.results || []) {
+            searchResults.push({ ...r, query: q });
+          }
+        } catch {
+          /* continue */
+        }
+      }
+      // dedupe by url/title
+      const seen = new Set();
+      searchResults = searchResults.filter((r) => {
+        const k = r.url || r.title;
+        if (!k || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      logLine(`Deep search hits: ${searchResults.length} from ${queries.length} queries`);
+    } else {
+      logLine("DEGRADED — deep dive tanpa search live", "warn");
+    }
+
+    const memRes = await fetch("/api/memory/compact?n=8", { signal });
+    const memJson = memRes.ok ? await memRes.json() : { items: [] };
+
+    setStatus(`Deep dive ${ticker}: AI…`, "busy");
+    const report = await runDeepDiveAgent({
+      ticker,
+      marketPack,
+      searchResults,
+      searchMode,
+      memory: memJson.items || [],
+      runId,
+      signal,
+      onLog: logLine
+    });
+
+    await fetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(report)
+    });
+
+    injectReportStylesOnce();
+    const html = renderDeepDiveHtml(report);
+    const reportEl = document.getElementById("report-view");
+    if (reportEl) reportEl.innerHTML = html;
+    window.__lastBriefing = report;
+
+    // shortlist panel shows ticker snapshot
+    const sl = document.getElementById("shortlist-table");
+    if (sl && marketPack.stock) {
+      const s = marketPack.stock;
+      sl.innerHTML = `
+        <div class="meta-strip">
+          <span>Deep dive <b>${esc(ticker)}</b></span>
+          <span>Regime <b>${esc(marketPack.marketRegime?.tag || "—")}</b></span>
+          <span>${esc(marketPack.marketRegime?.ihsgSummary || "")}</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th>Ticker</th><th>1d%</th><th>RVOL</th><th>Context</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="ticker">${esc(ticker)}</span></td>
+                <td class="${(s.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.changePct)}%</td>
+                <td>${fmt(s.rvol)}</td>
+                <td class="ctx-cell">${esc(s.context?.summary || "—")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    setStatus(`Deep dive ${ticker} selesai · ${report.forecast?.lean || "?"}`, "ok");
+    logLine(`Deep dive done ${ticker} lean=${report.forecast?.lean}`);
+    return report;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      setStatus("Dibatalkan", "warn");
+      logLine("Deep dive aborted", "warn");
+      return null;
+    }
+    console.error(e);
+    setStatus("Deep dive error: " + e.message, "err");
+    logLine(String(e.message || e), "err");
+    throw e;
+  }
 }

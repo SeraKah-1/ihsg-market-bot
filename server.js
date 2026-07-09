@@ -160,6 +160,24 @@ if (require.main === module) {
     }
   });
 
+  /** Single-ticker pack for deep dive (1y context + IHSG regime) */
+  app.get("/api/market/ticker/:code", async (req, res) => {
+    try {
+      const code = String(req.params.code || "")
+        .toUpperCase()
+        .replace(/\.JK$/i, "");
+      if (!/^[A-Z]{3,4}$/.test(code)) {
+        return res.status(400).json({ error: "ticker invalid (3-4 huruf)" });
+      }
+      const force = req.query.force === "1";
+      const pack = await marketApi.getTickerPack(code, { force });
+      res.json(pack);
+    } catch (e) {
+      console.error("[ticker]", e);
+      res.status(500).json({ error: String(e.message || e) });
+    }
+  });
+
   app.get("/api/search/ddg", async (req, res) => {
     try {
       const q = req.query.q || "";

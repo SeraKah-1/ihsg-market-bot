@@ -1,5 +1,5 @@
 import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "./state.js";
-import { runPipeline, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
+import { runPipeline, runDeepDive, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
 import { injectReportStylesOnce } from "./render-report.js";
 import { fetchModels } from "./ai.js";
 
@@ -313,6 +313,24 @@ function init() {
   $("btn-abort")?.addEventListener("click", () => abortRun());
   $("btn-dl-json")?.addEventListener("click", () => downloadJson());
   $("btn-dl-html")?.addEventListener("click", () => downloadHtml());
+
+  $("btn-deep-dive")?.addEventListener("click", async () => {
+    readSettingsFromForm();
+    const ticker = $("deep-ticker")?.value || "";
+    setLogOpen(true);
+    $("btn-deep-dive").disabled = true;
+    try {
+      await runDeepDive(ticker);
+    } finally {
+      $("btn-deep-dive").disabled = false;
+    }
+  });
+  $("deep-ticker")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      $("btn-deep-dive")?.click();
+    }
+  });
 
   fetch("/api/health")
     .then((r) => r.json())
