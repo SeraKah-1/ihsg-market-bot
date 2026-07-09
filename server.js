@@ -65,7 +65,11 @@ module.exports = {
 };
 
 if (require.main === module) {
-  http.createServer(handleAllowlistedProxy).listen(PROXY_PORT, "0.0.0.0", () => {
+  const nakedProxy = http.createServer(handleAllowlistedProxy);
+  nakedProxy.on("error", (err) => {
+    console.warn(`[CORS Proxy] skip :${PROXY_PORT} — ${err.code || err.message}`);
+  });
+  nakedProxy.listen(PROXY_PORT, "0.0.0.0", () => {
     console.log(`[CORS Proxy] http://localhost:${PROXY_PORT}`);
   });
 
