@@ -1,8 +1,9 @@
 /**
- * Analysis agent — full briefing + verification/crosscheck/hidden context.
- * Writer agent owns presentation polish separately.
+ * Analysis agent — thesis + verify/crosscheck.
+ * Pattern aligned with Writer (works): slim payload, medium reasoning first,
+ * cascade on timeout, no mega-schema in system prompt.
  */
-import { chatJson, modelFor, parseJsonLoose } from "../ai.js";
+import { chatJson, modelFor } from "../ai.js";
 import { analysisSystem } from "./constitution.js";
 import { applyStanceToBriefing } from "./stance-rules.js";
 import {
@@ -16,89 +17,64 @@ import {
   modelSupportsNativeSearch
 } from "../search/native-search.js";
 
-export function briefingSchema(runId, day, searchMode) {
-  return `{
-  "schemaVersion": 2,
-  "runId": "${runId}",
-  "asOfSession": "${day}",
-  "searchMode": "${searchMode}",
+/** Compact schema hint — same idea as Writer (not 100-line template) */
+const ANALYSIS_SCHEMA_HINT = `{
   "sentiment": {
-    "analysisSummary": "2-4 kalimat punch insight — TANPA dump angka",
-    "trapWatch": "jebakan exit-liq / late chase",
-    "flowWatch": "di mana uang hidup / mati",
+    "analysisSummary": "",
+    "trapWatch": "",
+    "flowWatch": "",
     "judgeLean": "fear|neutral|positive",
-    "judgeRationale": "kenapa lean itu — naratif, witty OK, TANPA rantai indikator",
+    "judgeRationale": "",
     "judgePriority": "follow_money|avoid_exit_liq|mixed",
     "confidenceLabel": "uncalibrated"
   },
   "marketWide": {
     "regimeTag": "",
-    "plainHeadline": "1 kalimat ngena",
-    "story": "1 paragraf throughline: setup → ketegangan → uang → keputusan",
-    "reasoningChain": ["karena A maka B", "karena B maka C", "karena C maka D"],
-    "whatItMeans": "2-3 kalimat arti buat posisi/cash",
-    "themes": ["tema manusiawi"],
-    "unexplained": ["yang aneh tanpa berita"],
-    "bestMoveOverall": "instruksi konkret",
-    "followMoneyThesis": "uang ke mana",
-    "nextActions": ["checklist"],
-    "crossTickerLinks": ["hubungan antar emiten shortlist"],
+    "plainHeadline": "",
+    "story": "",
+    "reasoningChain": ["langkah"],
+    "whatItMeans": "",
+    "themes": [],
+    "unexplained": [],
+    "bestMoveOverall": "",
+    "followMoneyThesis": "",
+    "nextActions": [],
+    "crossTickerLinks": [],
     "macroOutlook": {"tag":"cerah|biasa|suram","why":""},
     "fundamentalsOutlook": {"tag":"cerah|biasa|suram","why":""}
   },
   "shortlist": [{
     "ticker": "",
-    "whySelected": [],
-    "insight": "1 kalimat insight kuat",
-    "plain": {
-      "whatHappened": "narasi — NO dump rvol/m1%/HH_HL",
-      "whyItMatters": "nyambung ke story pasar",
-      "whatToDo": "lakukan / skip / watch + syarat"
-    },
-    "fundamentals": {
-      "summary": "",
-      "outlookTag": "cerah|biasa|suram",
-      "outlookWhy": ""
-    },
-    "outlook": {
-      "price": "cerah|biasa|suram",
-      "fundamentals": "cerah|biasa|suram",
-      "combined": "cerah|biasa|suram",
-      "priceWhy": "makna tape tanpa dump metrics",
-      "fundamentalsWhy": ""
-    },
-    "followMoney": {"flowAlive": true, "whoIsPushing": "", "fuelLeft": "unknown", "asymmetryNote": ""},
-    "stance": {
-      "aggressionAllowed": true,
-      "exitLiquidityRisk": "low|med|high",
-      "fomoThesis": "",
-      "invalidation": "",
-      "timeHorizon": "1-5d",
-      "judgePriority": "follow_money|avoid_exit_liq|mixed"
-    },
+    "insight": "",
+    "plain": {"whatHappened":"","whyItMatters":"","whatToDo":""},
+    "fundamentals": {"summary":"","outlookTag":"biasa","outlookWhy":""},
+    "outlook": {"price":"biasa","fundamentals":"biasa","combined":"biasa","priceWhy":"","fundamentalsWhy":""},
+    "followMoney": {"flowAlive":false,"whoIsPushing":"","fuelLeft":"unknown","asymmetryNote":""},
+    "stance": {"aggressionAllowed":false,"exitLiquidityRisk":"low|med|high","fomoThesis":"","invalidation":"","timeHorizon":"1-5d","judgePriority":"mixed"},
     "scenarios": {
-      "base": {"narrative":"cerita base","horizon":"1-5d","prob":0.5},
-      "bull": {"narrative":"","horizon":"1-5d","prob":0.25},
-      "bear": {"narrative":"","horizon":"1-5d","prob":0.25}
+      "base":{"narrative":"","horizon":"1-5d","prob":0.5},
+      "bull":{"narrative":"","horizon":"1-5d","prob":0.25},
+      "bear":{"narrative":"","horizon":"1-5d","prob":0.25}
     },
     "bestMoveFraming": "",
-    "hiddenNotes": "konteks tersembunyi bila ada",
-    "crossChecks": ["claim vs tape"]
+    "whySelected": [],
+    "hiddenNotes": "",
+    "crossChecks": []
   }],
   "analysisMeta": {
     "crossChecks": [{"claim":"","vs":"hard|research|peer","verdict":"ok|weak|conflict","note":""}],
-    "hiddenContext": ["deep context yang sering dilewat"],
-    "missedByResearch": ["apa yang kira-kira dilewat researcher"],
-    "residualDoubts": ["sisa ragu jujur"],
-    "clarifications": [{"hole":"","claim":"","url":"","sourceTier":""}],
-    "note": "ringkas apa yang diverifikasi / di-patch"
+    "hiddenContext": [],
+    "missedByResearch": [],
+    "residualDoubts": [],
+    "note": ""
   },
-  "memoryWrite": {
-    "compact": {"regimeTag":"","themes":[],"lean":"","top_tickers_1line":[]},
-    "openHypotheses": []
-  },
-  "disclaimer": "Bukan saran investasi. Keputusan akhir di user. Confidence uncalibrated."
+  "memoryWrite": {"compact":{"regimeTag":"","themes":[],"lean":"","top_tickers_1line":[]},"openHypotheses":[]},
+  "disclaimer": "Bukan saran investasi."
 }`;
+
+/** @deprecated kept for imports that call briefingSchema */
+export function briefingSchema(runId, day, searchMode) {
+  return ANALYSIS_SCHEMA_HINT;
 }
 
 export async function runAnalysis({
@@ -111,9 +87,11 @@ export async function runAnalysis({
   onLog
 }) {
   const model = modelFor("analysis");
-  onLog?.(`Analysis model=${model} · analyse + verify/crosscheck · temp=omit`);
+  onLog?.(
+    `Analysis model=${model} · slim payload + reason cascade medium→… (pola Writer)`
+  );
 
-  // Clarify web only if research thin — skip when already fat to avoid double timeout
+  // Clarify web only if research thin
   let clarifications = [];
   const findingsN = (research?.findings || []).length;
   const salvageThin =
@@ -138,65 +116,45 @@ export async function runAnalysis({
     );
   }
 
-  const schema = briefingSchema(runId, shortlistPack.day, searchMode);
-  let briefing;
-
-  // Compact user payload — large dumps caused Failed to fetch mid-flight
-  const userPayload = {
-    day: shortlistPack.day,
-    runId,
-    note:
-      "Research pack di-load dari Firebase memory bus (compact). " +
-      "Verifikasi + crosscheck + hidden. Metrics = fakta diam; prose = makna.",
-    memoryBus: research?.memoryRef || { runId, step: "research" },
-    marketRegime: shortlistPack.marketRegime,
-    ihsg: {
-      close: shortlistPack.ihsg?.close,
-      changePct: shortlistPack.ihsg?.changePct,
-      contextSummary: shortlistPack.ihsg?.context?.summary
-    },
-    breadth: shortlistPack.breadth,
-    globals: (shortlistPack.globals || []).slice(0, 8).map((g) => ({
-      label: g.label,
-      changePct: g.changePct
-    })),
-    shortlist: (shortlistPack.shortlist || []).map((s) => ({
-      ticker: s.ticker,
-      whySelected: s.whySelected,
-      changePct: s.metrics?.changePct,
-      rvol: s.metrics?.rvol,
-      zRet: s.metrics?.zRet,
-      contextSummary: s.context?.summary,
-      m1: s.context?.m1,
-      w1: s.context?.w1,
-      volTrend: s.context?.vol?.volumeTrend,
-      vsIhsg: s.vsIhsg,
-      flowHints: s.flowHints
-    })),
+  const userPayload = buildSlimAnalysisUser({
+    shortlistPack,
     research,
-    clarificationsFromWeb: (clarifications || []).slice(0, 12),
-    memoryRecent: (memory || []).slice(0, 6)
-  };
+    memory,
+    clarifications,
+    runId,
+    searchMode
+  });
+  const userStr = JSON.stringify(userPayload);
+  onLog?.(
+    `Analysis payload ready · ~${Math.round(userStr.length / 1024)}KB · tickers=${(userPayload.tickers || []).length}`
+  );
 
+  let briefing;
   try {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
     briefing = await chatJson({
       model,
       system:
         analysisSystem() +
-        "\n\nIsi SEMUA field narasi + analysisMeta (verifikasi)." +
-        "\nJANGAN salin metrics ke prose — UI punya indicators JSON terpisah." +
-        "\nResearch pack dari memory bus = sumber. Tulis story + reasoningChain yang saling nyambung." +
-        "\nWajib isi: crossChecks, hiddenContext, missedByResearch, residualDoubts." +
-        "\nSchema:\n" +
-        schema,
-      user: JSON.stringify(userPayload, null, 2),
+        "\n\nIsi JSON lengkap: sentiment + marketWide + shortlist (SEMUA ticker) + analysisMeta." +
+        "\nJANGAN dump rvol/HH_HL/m1% ke prose. Metrics = fakta diam." +
+        "\nSchema ringkas:\n" +
+        ANALYSIS_SCHEMA_HINT,
+      user: userStr,
       signal,
       temperature: null,
-      reasoningEffort: "auto",
+      // Writer that works uses medium — high hangs 120s on router
+      reasoningEffort: "medium",
+      timeoutMs: 100_000,
       onLog
     });
+    onLog?.(
+      `Analysis LLM OK lean=${briefing?.sentiment?.judgeLean || "?"} reason=${briefing?.__meta?.reasoningEffort || "?"}`
+    );
   } catch (e) {
-    onLog?.("Analysis gagal → heuristic: " + e.message, "err");
+    if (e?.name === "AbortError") throw e;
+    onLog?.("Analysis gagal → heuristic: " + (e.message || e), "err");
     briefing = buildHeuristicBriefing({ shortlistPack, research, searchMode, runId });
   }
 
@@ -204,7 +162,6 @@ export async function runAnalysis({
   briefing = mergeSentimentShapes(briefing);
   briefing = applyStanceToBriefing(briefing);
   briefing = enrichBriefingForHumans(briefing, shortlistPack, research);
-  // indicators attached after writer too; attach early so analysis draft has them if writer fails
   briefing = attachIndicatorsToBriefing(briefing, shortlistPack);
 
   if (!briefing.analysisMeta) {
@@ -219,7 +176,6 @@ export async function runAnalysis({
   } else if (clarifications.length && !briefing.analysisMeta.clarifications?.length) {
     briefing.analysisMeta.clarifications = clarifications;
   }
-  // legacy slot for old renderers
   briefing.verify = {
     note: briefing.analysisMeta.note || "analysis+verify",
     residualDoubts: briefing.analysisMeta.residualDoubts || [],
@@ -230,6 +186,95 @@ export async function runAnalysis({
     `Analysis done lean=${briefing.sentiment?.judgeLean} hidden=${(briefing.analysisMeta?.hiddenContext || []).length} missed=${(briefing.analysisMeta?.missedByResearch || []).length}`
   );
   return briefing;
+}
+
+function buildSlimAnalysisUser({
+  shortlistPack,
+  research,
+  memory,
+  clarifications,
+  runId,
+  searchMode
+}) {
+  const r = research || {};
+  const perTicker = r.perTicker || {};
+  return {
+    task: "Analisis + verifikasi IHSG. Output JSON murni. Isi semua ticker.",
+    runId,
+    searchMode,
+    day: shortlistPack?.day,
+    market: {
+      regimeTag: shortlistPack?.marketRegime?.tag,
+      regimeNote: shortlistPack?.marketRegime?.note,
+      ihsgClose: shortlistPack?.ihsg?.close,
+      ihsgChangePct: shortlistPack?.ihsg?.changePct,
+      ihsgSummary: clip(shortlistPack?.ihsg?.context?.summary, 280),
+      breadth: shortlistPack?.breadth,
+      globals: (shortlistPack?.globals || []).slice(0, 6).map((g) => ({
+        label: g.label,
+        changePct: g.changePct
+      }))
+    },
+    researchSlim: {
+      mode: r.agentMeta?.mode,
+      macroNote: clip(r.macroNote, 500),
+      macroOutlookTag: r.macroOutlookTag,
+      hotTakes: (r.hotTakes || []).slice(0, 6).map((x) => clip(x, 180)),
+      marketNotes: (r.marketNotes || []).slice(0, 10).map((x) => clip(x, 180)),
+      unexplainedMarket: (r.unexplainedMarket || []).slice(0, 8).map((x) => clip(x, 160)),
+      findings: (r.findings || []).slice(0, 16).map((f) => ({
+        claim: clip(f.claim || f.title || f.snippet, 200),
+        url: (f.url || "").slice(0, 120),
+        sourceTier: f.sourceTier || "unknown",
+        ticker: f.ticker || null
+      }))
+    },
+    tickers: (shortlistPack?.shortlist || []).map((s) => {
+      const pr = perTicker[s.ticker] || {};
+      return {
+        ticker: s.ticker,
+        whySelected: s.whySelected,
+        tape: {
+          changePct: s.metrics?.changePct,
+          rvol: s.metrics?.rvol,
+          zRet: s.metrics?.zRet,
+          m1struct: s.context?.m1?.structure,
+          m1ret: s.context?.m1?.retPct,
+          w1struct: s.context?.w1?.structure,
+          volTrend: s.context?.vol?.volumeTrend,
+          flowAlive: s.flowHints?.flowAlive,
+          exitLiq: s.flowHints?.exitLiquidityHint,
+          summary: clip(s.context?.summary, 200)
+        },
+        research: {
+          catalysts: (pr.catalysts || []).slice(0, 4).map((c) =>
+            typeof c === "string" ? clip(c, 140) : clip(c.claim || c.title, 140)
+          ),
+          unexplained: !!pr.unexplained,
+          notes: clip(pr.notes, 240),
+          fundamentalsNote: clip(pr.fundamentalsNote, 240),
+          outlookTag: pr.outlookTag || null
+        }
+      };
+    }),
+    clarificationsFromWeb: (clarifications || []).slice(0, 6).map((c) => ({
+      hole: clip(c.hole, 120),
+      claim: clip(c.claim, 180),
+      url: (c.url || "").slice(0, 100)
+    })),
+    memoryRecent: (memory || []).slice(0, 4).map((m) => ({
+      date: m.date,
+      lean: m.lean,
+      regimeTag: m.regimeTag,
+      themes: (m.themes || []).slice(0, 4)
+    }))
+  };
+}
+
+function clip(s, n) {
+  if (s == null) return s;
+  const t = String(s);
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
 }
 
 async function runAnalysisClarify({
@@ -246,370 +291,238 @@ async function runAnalysisClarify({
     onLog?.(`Analysis clarify: ${holes.length} holes (no native web) — pakai research saja`);
     return holes.slice(0, 4).map((h) => ({ hole: h, claim: "", sourceTier: "unknown" }));
   }
-
   onLog?.(`Analysis clarify web · holes=${holes.slice(0, 3).join(" | ")}`);
   try {
-    const native = await chatWithNativeWebSearch({
+    const q = holes.slice(0, 3).join(" ; ");
+    const out = await chatWithNativeWebSearch({
       model,
       system:
-        analysisSystem() +
-        `\nKamu HANYA klarifikasi hole. Return JSON:
-{"clarifications":[{"hole":"","claim":"","sourceTier":"media|official|rumor|unknown","url":"","changesMind":false,"hiddenAngle":""}]}
-Max 4 hole paling kritis. Skeptis pragmatis, bukan overhate.`,
-      user: `Day=${shortlistPack.day} regime=${shortlistPack.marketRegime?.tag}
-Research macro: ${research?.macroNote || "—"}
-Hot: ${(research?.hotTakes || []).join(" · ")}
-Holes:
-${holes.map((h, i) => `${i + 1}. ${h}`).join("\n")}
-Cari hidden angle bila ada (ownership, peer, calendar, sector).`,
+        "Klarifikasi singkat hole riset IHSG. Jawab JSON: {clarifications:[{hole,claim,url,sourceTier}]}",
+      user: `Holes:\n${holes.slice(0, 5).join("\n")}\nDay ${shortlistPack.day}`,
       signal,
-      isJson: true,
       unrestrictedWeb: true,
-      temperature: null,
-      reasoningEffort: "auto",
+      reasoningEffort: "medium",
       onLog
     });
-    if (native.ok !== false && native.content) {
-      const p =
-        typeof native.content === "object" && native.content
-          ? native.content
-          : parseJsonLoose(native.content);
-      if (p?.clarifications?.length) {
-        onLog?.(`Analysis clarifications=${p.clarifications.length}`);
-        return p.clarifications;
-      }
-      if (String(native.content).length > 40) {
-        return [
-          {
-            hole: "raw",
-            claim: String(native.content).slice(0, 800),
-            sourceTier: "media"
-          }
-        ];
-      }
+    const text = out?.content || out?.text || "";
+    try {
+      const { parseJsonLoose } = await import("../ai.js");
+      const parsed = parseJsonLoose(text);
+      if (Array.isArray(parsed?.clarifications)) return parsed.clarifications.slice(0, 8);
+    } catch {
+      /* */
     }
+    return holes.slice(0, 3).map((h) => ({
+      hole: h,
+      claim: String(text).slice(0, 200),
+      sourceTier: "unknown"
+    }));
   } catch (e) {
-    onLog?.("Analysis clarify fail: " + e.message, "warn");
+    onLog?.("clarify web fail: " + e.message, "warn");
+    return holes.slice(0, 3).map((h) => ({ hole: h, claim: "", sourceTier: "unknown" }));
   }
-  return [];
 }
 
 function collectHoles(shortlistPack, research) {
   const holes = [];
-  for (const u of research?.unexplainedMarket || []) holes.push(String(u));
-  const per = research?.perTicker || {};
-  for (const s of shortlistPack.shortlist || []) {
-    const r = per[s.ticker] || {};
-    if (r.unexplained || !r.catalysts?.length) {
-      holes.push(`${s.ticker}: tape aneh / berita tipis — cari katalis atau konfirm unexplained`);
+  if (research?.agentMeta?.mode === "agentic_output_not_json" || research?.agentMeta?.mode === "agentic_salvage") {
+    holes.push("agentic_output_not_json");
+  }
+  for (const s of shortlistPack?.shortlist || []) {
+    const t = s.ticker;
+    const pr = research?.perTicker?.[t];
+    const rvol = s.metrics?.rvol;
+    const ch = s.metrics?.changePct;
+    if ((rvol >= 1.5 || Math.abs(ch || 0) >= 3) && (!pr?.catalysts?.length || pr?.unexplained)) {
+      holes.push(`${t}: tape aneh / berita tipis — cari katalis`);
     }
-    if (
-      String(r.fundamentalsNote || "")
-        .toUpperCase()
-        .includes("TIDAK") ||
-      !r.fundamentalsNote
-    ) {
-      holes.push(`${s.ticker}: funda/lapkeu/proyek — cek aksi korp atau guidance`);
-    }
-    if (s.flowHints?.exitLiquidityHint === "high") {
-      holes.push(`${s.ticker}: exit-liq high — pure tape atau ada berita?`);
-    }
-    if (s.metrics?.rvol != null && s.metrics.rvol >= 1.5) {
-      holes.push(`${s.ticker}: volume lonjak — apa katalis sesi?`);
+    if (!pr?.fundamentalsNote && !pr?.catalysts?.length) {
+      holes.push(`${t}: funda/lapkeu/proyek — cek aksi korp`);
     }
   }
-  if ((shortlistPack.ihsg?.changePct || 0) <= -1.2) {
-    holes.push("IHSG drop tajam — penopang/pemberat + vs global");
+  if (!(research?.findings || []).length) {
+    holes.push("research findings kosong — IHSG headline hari ini");
   }
-  return [...new Set(holes.filter(Boolean))].slice(0, 8);
-}
-
-/** Map new sentiment fields + legacy fear/positive for render */
-export function mergeSentimentShapes(briefing) {
-  const s = briefing.sentiment || {};
-  const analysisSummary =
-    s.analysisSummary || s.judgeRationale || s.summary || "";
-  const trap = s.trapWatch || s.fear?.summary || "";
-  const flow = s.flowWatch || s.positive?.summary || "";
-  briefing.sentiment = {
-    ...s,
-    analysisSummary,
-    trapWatch: trap,
-    flowWatch: flow,
-    fear: { summary: trap || s.fear?.summary || "", points: s.fear?.points || [] },
-    positive: {
-      summary: flow || s.positive?.summary || "",
-      points: s.positive?.points || []
-    },
-    judgeLean: s.judgeLean || "neutral",
-    judgeRationale: s.judgeRationale || analysisSummary,
-    judgePriority: s.judgePriority || "mixed",
-    confidenceLabel: "uncalibrated"
-  };
-  return briefing;
+  return [...new Set(holes)].slice(0, 8);
 }
 
 export function stampBriefingMeta(briefing, shortlistPack, searchMode, runId) {
+  if (!briefing || typeof briefing !== "object") briefing = {};
   briefing.schemaVersion = briefing.schemaVersion || 2;
-  briefing.runId = runId;
-  briefing.asOfSession = shortlistPack.day;
-  briefing.searchMode = searchMode;
-  briefing.generatedAt = new Date().toISOString();
-  briefing.dataQuality = shortlistPack.dataQuality;
-  briefing.marketRegime = shortlistPack.marketRegime;
-  briefing.ihsg = shortlistPack.ihsg;
-  briefing.globals = shortlistPack.globals;
-  briefing.breadth = shortlistPack.breadth;
-  briefing.disclaimer =
-    briefing.disclaimer ||
-    "Bukan saran investasi. Keputusan akhir di user. Confidence uncalibrated.";
-
-  const byTicker = Object.fromEntries(
-    (shortlistPack.shortlist || []).map((s) => [s.ticker, s])
+  briefing.runId = runId || briefing.runId;
+  briefing.asOfSession = shortlistPack?.day || briefing.asOfSession;
+  briefing.searchMode = searchMode || briefing.searchMode;
+  briefing.ihsg = shortlistPack?.ihsg || briefing.ihsg;
+  briefing.marketRegime = shortlistPack?.marketRegime || briefing.marketRegime;
+  briefing.breadth = shortlistPack?.breadth || briefing.breadth;
+  briefing.globals = shortlistPack?.globals || briefing.globals;
+  briefing.dataQuality = shortlistPack?.dataQuality || briefing.dataQuality;
+  // merge hard metrics onto shortlist rows
+  const hardBy = Object.fromEntries(
+    (shortlistPack?.shortlist || []).map((s) => [s.ticker, s])
   );
-  briefing.shortlist = (briefing.shortlist || shortlistPack.shortlist || []).map((row) => {
-    const src = byTicker[row.ticker] || shortlistPack.shortlist.find((s) => s.ticker === row.ticker);
-    if (src) {
-      row.metrics = src.metrics;
-      row.context = src.context;
-      row.vsIhsg = src.vsIhsg;
-      row.whySelected = src.whySelected || row.whySelected;
-      row.flowHints = src.flowHints;
+  if (Array.isArray(briefing.shortlist)) {
+    briefing.shortlist = briefing.shortlist.map((row) => {
+      const h = hardBy[row.ticker];
+      if (!h) return row;
+      return {
+        ...row,
+        metrics: h.metrics || row.metrics,
+        context: h.context || row.context,
+        vsIhsg: h.vsIhsg || row.vsIhsg,
+        flowHints: h.flowHints || row.flowHints,
+        whySelected: h.whySelected || row.whySelected
+      };
+    });
+    // ensure all hard tickers present
+    for (const h of shortlistPack?.shortlist || []) {
+      if (!briefing.shortlist.find((r) => r.ticker === h.ticker)) {
+        briefing.shortlist.push({
+          ticker: h.ticker,
+          whySelected: h.whySelected,
+          metrics: h.metrics,
+          context: h.context,
+          vsIhsg: h.vsIhsg,
+          flowHints: h.flowHints,
+          plain: plainFromHard(h),
+          insight: "",
+          outlook: { price: heuristicPriceOutlook(h).tag, fundamentals: "biasa", combined: "biasa" }
+        });
+      }
     }
-    return row;
-  });
-
-  for (const s of shortlistPack.shortlist || []) {
-    if (!briefing.shortlist.find((x) => x.ticker === s.ticker)) {
-      briefing.shortlist.push({
-        ticker: s.ticker,
-        metrics: s.metrics,
-        whySelected: s.whySelected,
-        stance: {
-          exitLiquidityRisk: s.flowHints?.exitLiquidityHint || "low",
-          aggressionAllowed:
-            s.flowHints?.flowAlive && s.flowHints?.exitLiquidityHint !== "high",
-          fomoThesis: "",
-          invalidation: "",
-          timeHorizon: "1-5d"
-        },
-        scenarios: {
-          base: { narrative: "nunggu konfirmasi", horizon: "1-5d", prob: 0.5 },
-          bull: { narrative: "", horizon: "1-5d", prob: 0.25 },
-          bear: { narrative: "", horizon: "1-5d", prob: 0.25 }
-        }
-      });
-    }
+  } else {
+    briefing.shortlist = (shortlistPack?.shortlist || []).map((h) => ({
+      ticker: h.ticker,
+      whySelected: h.whySelected,
+      metrics: h.metrics,
+      context: h.context,
+      vsIhsg: h.vsIhsg,
+      flowHints: h.flowHints,
+      plain: plainFromHard(h)
+    }));
   }
+  return briefing;
+}
+
+export function mergeSentimentShapes(briefing) {
+  if (!briefing.sentiment) briefing.sentiment = {};
+  const s = briefing.sentiment;
+  if (!s.judgeLean && s.lean) s.judgeLean = s.lean;
+  if (!s.analysisSummary && s.summary) s.analysisSummary = s.summary;
   return briefing;
 }
 
 export function enrichBriefingForHumans(briefing, shortlistPack, research) {
   if (!briefing) return briefing;
-  const packPlain = plainMarketFromHard(shortlistPack || {});
-  briefing.marketWide = briefing.marketWide || {};
-  const mw = briefing.marketWide;
-  if (!mw.plainHeadline || looksLikeJargonSoup(mw.plainHeadline)) {
-    mw.plainHeadline = packPlain.plainHeadline;
-  }
-  if (!mw.whatItMeans) mw.whatItMeans = packPlain.whatItMeans;
-  if (!mw.nextActions?.length) mw.nextActions = packPlain.nextActions;
-  if (!mw.macroOutlook?.tag) {
-    mw.macroOutlook = {
-      tag: heuristicMacroTag(shortlistPack),
-      why: packPlain.macroBackdrop + " " + (shortlistPack?.marketRegime?.note || "")
-    };
-  }
-  if (!mw.bestMoveOverall) {
-    mw.bestMoveOverall =
-      briefing.sentiment?.judgePriority === "avoid_exit_liq"
-        ? "Jangan nampung spike sepi. Skip thin tape."
-        : "Ikut flow yang volume-nya hidup; skip yang mati.";
-  }
-  if (!mw.followMoneyThesis) mw.followMoneyThesis = packPlain.whatItMeans;
-  if (!mw.story) mw.story = mw.plainHeadline + " " + (mw.whatItMeans || "");
-  if (!mw.reasoningChain?.length) {
-    mw.reasoningChain = [
-      packPlain.plainHeadline,
-      packPlain.whatItMeans,
-      mw.bestMoveOverall
-    ].filter(Boolean);
-  }
-
-  const researchPer = research?.perTicker || {};
-  briefing.shortlist = (briefing.shortlist || []).map((row) => {
-    const hard = plainFromHard(row);
-    const priceH = heuristicPriceOutlook(row);
-    row.plain = {
-      whatHappened: stripJargon(row.plain?.whatHappened) || hard.whatHappened,
-      whyItMatters: stripJargon(row.plain?.whyItMatters) || hard.whyItMatters,
-      whatToDo: stripJargon(row.plain?.whatToDo) || row.bestMoveFraming || hard.whatToDo
-    };
-    if (looksLikeJargonSoup(row.plain.whatHappened)) {
-      row.plain.whatHappened = hard.whatHappened;
-    }
-    if (row.narrative && looksLikeJargonSoup(row.narrative)) {
-      row.narrative = row.plain.whatHappened + " " + row.plain.whyItMatters;
-    }
-    const r = researchPer[row.ticker] || {};
-    row.fundamentals = row.fundamentals || {};
-    if (!row.fundamentals.summary) {
-      row.fundamentals.summary =
-        r.fundamentalsNote ||
-        r.notes ||
-        (r.unexplained
-          ? "Hunt kosong — gak ada berita/lapkeu yang nempel."
-          : "Funda tipis di sesi ini.");
-    }
-    if (!row.fundamentals.outlookTag) {
-      row.fundamentals.outlookTag = r.outlookTag || "biasa";
-    }
-    if (!row.fundamentals.outlookWhy) {
-      row.fundamentals.outlookWhy =
-        r.fundamentalsNote || "Default biasa sampai ada angka/proyek yang kebaca.";
-    }
-    row.outlook = row.outlook || {};
-    row.outlook.price = row.outlook.price || priceH.tag;
-    row.outlook.priceWhy = stripJargon(row.outlook.priceWhy) || priceH.why;
-    row.outlook.fundamentals = row.outlook.fundamentals || row.fundamentals.outlookTag;
-    row.outlook.fundamentalsWhy =
-      stripJargon(row.outlook.fundamentalsWhy) || row.fundamentals.outlookWhy;
-    row.outlook.combined =
-      row.outlook.combined ||
-      combineOutlook(
-        row.outlook.price,
-        row.outlook.fundamentals,
-        row.stance?.exitLiquidityRisk
-      );
-    if (!row.bestMoveFraming) row.bestMoveFraming = row.plain.whatToDo;
-    if (!row.insight) {
-      row.insight = row.plain.whyItMatters?.slice(0, 160) || row.ticker;
-    }
-    return row;
+  const plainM = plainMarketFromHard({
+    marketRegime: shortlistPack?.marketRegime || briefing.marketRegime,
+    ihsg: shortlistPack?.ihsg || briefing.ihsg,
+    breadth: shortlistPack?.breadth || briefing.breadth
   });
-
-  if (looksLikeJargonSoup(briefing.sentiment?.judgeRationale)) {
-    briefing.sentiment = briefing.sentiment || {};
-    briefing.sentiment.judgeRationale =
-      mw.plainHeadline + " " + (mw.bestMoveOverall || "");
+  if (!briefing.marketWide) briefing.marketWide = {};
+  const mw = briefing.marketWide;
+  if (!mw.plainHeadline) mw.plainHeadline = plainM.plainHeadline;
+  if (!mw.whatItMeans) mw.whatItMeans = plainM.whatItMeans;
+  if (!mw.story || /LLM gagal|heuristic|rvol|HH_HL|volumeTrend/i.test(mw.story || "")) {
+    // leave LLM story if good; heuristic fill only if empty
+    if (!mw.story) mw.story = plainM.whatItMeans || plainM.plainHeadline;
   }
-  if (
-    !briefing.sentiment?.analysisSummary ||
-    looksLikeJargonSoup(briefing.sentiment.analysisSummary)
-  ) {
-    briefing.sentiment = briefing.sentiment || {};
-    briefing.sentiment.analysisSummary = briefing.sentiment.judgeRationale || mw.plainHeadline;
+  for (const row of briefing.shortlist || []) {
+    const hard = (shortlistPack?.shortlist || []).find((s) => s.ticker === row.ticker);
+    if (!hard) continue;
+    const p = plainFromHard(hard);
+    if (!row.plain) row.plain = p;
+    else {
+      if (!row.plain.whatHappened) row.plain.whatHappened = p.whatHappened;
+      if (!row.plain.whyItMatters) row.plain.whyItMatters = p.whyItMatters;
+      if (!row.plain.whatToDo) row.plain.whatToDo = p.whatToDo;
+    }
   }
+  void research;
   return briefing;
 }
 
-function looksLikeJargonSoup(s) {
-  const t = String(s || "");
-  if (t.length < 12) return true;
-  const hits = (
-    t.match(/flowAlive|volumeTrend|rvol|m1\+|y1\+|exit-liq|HH_HL|LH_LL|post-parabolic|ret1d|zRet/gi) ||
-    []
-  ).length;
-  const hasSpaces = (t.match(/\s/g) || []).length;
-  return hits >= 3 || (hits >= 2 && hasSpaces < 8);
-}
-
-/** Soft-clean metric dumps inside otherwise ok prose */
-function stripJargon(s) {
-  if (!s) return "";
-  let t = String(s);
-  if (looksLikeJargonSoup(t)) return "";
-  // light scrub of code tokens
-  t = t
-    .replace(/\brvol\s*[=~]?\s*[\d.]+/gi, "volume relatif")
-    .replace(/\bHH_HL\b/g, "struktur naik")
-    .replace(/\bLH_LL\b/g, "struktur lemah")
-    .replace(/\bvolumeTrend\s*=\s*\w+/gi, "tren volume");
-  return t.trim();
-}
-
-function heuristicMacroTag(pack) {
-  const tag = String(pack?.marketRegime?.tag || "").toLowerCase();
-  const chg = pack?.ihsg?.changePct;
-  if (tag.includes("risk_on") || tag.includes("trend_up")) return "cerah";
-  if (tag.includes("risk_off") || tag.includes("trend_down")) return "suram";
-  if (tag.includes("high_vol") || (chg != null && Math.abs(chg) >= 1.5)) return "biasa";
-  return "biasa";
-}
-
-function combineOutlook(price, funda, exitRisk) {
-  if (exitRisk === "high") return "suram";
-  const score = (t) => (t === "cerah" ? 1 : t === "suram" ? -1 : 0);
-  const s = score(price) + score(funda);
-  if (s >= 1) return "cerah";
-  if (s <= -1) return "suram";
-  return "biasa";
-}
-
 function buildHeuristicBriefing({ shortlistPack, research, searchMode, runId }) {
-  const hot = (research?.hotTakes || []).join(" · ");
-  return {
-    schemaVersion: 2,
-    runId,
-    asOfSession: shortlistPack.day,
-    searchMode,
-    sentiment: {
-      analysisSummary: hot || "Analysis LLM gagal — baca shortlist + research mentah.",
-      trapWatch: "Cek thin volume & spike tanpa berita.",
-      flowWatch: "Lihat flow di shortlist.",
-      judgeLean: "neutral",
-      judgeRationale: "Fallback heuristic tanpa Analysis LLM",
-      judgePriority: "mixed",
-      confidenceLabel: "uncalibrated"
-    },
-    marketWide: {
-      regimeTag: shortlistPack.marketRegime?.tag || "unknown",
-      story: hot || shortlistPack.marketRegime?.note || "",
-      reasoningChain: [hot || "Data hard only"].filter(Boolean),
-      themes: research?.hotTakes || [],
-      unexplained: research?.unexplainedMarket || ["analysis_llm_failed"],
-      bestMoveOverall: "Manual: shortlist + invalidation flow.",
-      followMoneyThesis: research?.macroNote || ""
-    },
-    shortlist: (shortlistPack.shortlist || []).map((s) => ({
+  const plainM = plainMarketFromHard({
+    marketRegime: shortlistPack.marketRegime,
+    ihsg: shortlistPack.ihsg,
+    breadth: shortlistPack.breadth
+  });
+  const shortlist = (shortlistPack.shortlist || []).map((s) => {
+    const p = plainFromHard(s);
+    const po = heuristicPriceOutlook(s);
+    return {
       ticker: s.ticker,
-      metrics: s.metrics,
       whySelected: s.whySelected,
+      metrics: s.metrics,
+      context: s.context,
+      vsIhsg: s.vsIhsg,
+      flowHints: s.flowHints,
+      plain: p,
+      insight: p.whyItMatters,
+      outlook: {
+        price: po.tag,
+        fundamentals: "biasa",
+        combined: po.tag,
+        priceWhy: po.why,
+        fundamentalsWhy: "TIDAK KETEMU di hunt / analysis timeout"
+      },
       stance: {
+        aggressionAllowed: !!s.flowHints?.flowAlive && s.flowHints?.exitLiquidityHint !== "high",
         exitLiquidityRisk: s.flowHints?.exitLiquidityHint || "low",
-        aggressionAllowed: !!(
-          s.flowHints?.flowAlive && s.flowHints?.exitLiquidityHint !== "high"
-        ),
-        fomoThesis: s.flowHints?.flowAlive ? "flow heuristic hidup" : "",
+        fomoThesis: "",
         invalidation: "breakdown volume/price structure",
         timeHorizon: "1-5d",
-        judgePriority:
-          s.flowHints?.exitLiquidityHint === "high" ? "avoid_exit_liq" : "follow_money"
+        judgePriority: s.flowHints?.flowAlive ? "follow_money" : "avoid_exit_liq"
       },
       scenarios: {
         base: { narrative: "ikut tape harian", horizon: "1-5d", prob: 0.5 },
         bull: { narrative: "continuation volume hold", horizon: "1-5d", prob: 0.25 },
         bear: { narrative: "fade climax", horizon: "1-5d", prob: 0.25 }
       },
-      bestMoveFraming:
-        s.flowHints?.exitLiquidityHint === "high" ? "jangan nampung" : "ikut flow + invalidation"
-    })),
+      bestMoveFraming: p.whatToDo,
+      fundamentals: { summary: "analysis timeout — cek research mentah", outlookTag: "biasa" }
+    };
+  });
+  return {
+    schemaVersion: 2,
+    runId,
+    asOfSession: shortlistPack.day,
+    searchMode,
+    sentiment: {
+      analysisSummary: "Analysis LLM timeout/gagal — baca shortlist + research. Writer masih bisa polish.",
+      trapWatch: "Cek thin volume & spike tanpa berita.",
+      flowWatch: "Lihat flow di shortlist.",
+      judgeLean: "neutral",
+      judgeRationale: "Fallback heuristic tanpa Analysis LLM penuh",
+      judgePriority: "mixed",
+      confidenceLabel: "uncalibrated"
+    },
+    marketWide: {
+      regimeTag: shortlistPack.marketRegime?.tag,
+      plainHeadline: plainM.plainHeadline,
+      story: plainM.whatItMeans,
+      reasoningChain: ["Data hard only — LLM analysis tidak selesai"],
+      whatItMeans: plainM.whatItMeans,
+      themes: (research?.hotTakes || []).slice(0, 4),
+      unexplained: (research?.unexplainedMarket || []).slice(0, 6),
+      bestMoveOverall: "Manual: shortlist + invalidation flow.",
+      followMoneyThesis: "Lihat flowAlive di shortlist.",
+      nextActions: [
+        "Baca shortlist per emiten: apa / kenapa / lakukan",
+        "Prioritas: hindari exit-liq & tape sepi"
+      ],
+      macroOutlook: { tag: "biasa", why: shortlistPack.marketRegime?.note || "" },
+      fundamentalsOutlook: { tag: "biasa", why: "analysis timeout" }
+    },
+    shortlist,
     analysisMeta: {
-      note: "heuristic — LLM analysis gagal",
-      crossChecks: [],
+      note: "heuristic — LLM analysis timeout/gagal",
+      residualDoubts: ["analysis_llm_failed"],
       hiddenContext: [],
       missedByResearch: [],
-      residualDoubts: ["analysis_llm_failed"],
-      clarifications: []
+      crossChecks: []
     },
-    memoryWrite: {
-      compact: {
-        regimeTag: shortlistPack.marketRegime?.tag || "unknown",
-        themes: [],
-        lean: "neutral",
-        top_tickers_1line: (shortlistPack.shortlist || []).slice(0, 5).map((s) => s.ticker)
-      },
-      openHypotheses: []
-    }
+    disclaimer: "Bukan saran investasi. Keputusan akhir di user."
   };
 }

@@ -93,6 +93,8 @@ export function shouldDropReasoningLevel(err) {
     msg.includes("unrecognized") ||
     msg.includes("extra fields") ||
     msg.includes("additional properties") ||
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
     (msg.includes("400") && (msg.includes("reason") || msg.includes("think")))
   ) {
     return true;

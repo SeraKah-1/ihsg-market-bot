@@ -369,10 +369,19 @@ export async function chatComplete({
   const efforts = reasoningEffortCascade(preferred ?? "high");
   let lastErr = null;
 
-  for (const effort of efforts) {
+  for (let i = 0; i < efforts.length; i++) {
+    const effort = efforts[i];
+    const hasLower = i < efforts.length - 1;
+    // Shorter budget on high effort — hang often means model stuck thinking
+    const effortTimeout =
+      effort === "high"
+        ? Math.min(timeoutMs, 75_000)
+        : effort === "medium"
+          ? Math.min(timeoutMs, 90_000)
+          : timeoutMs;
     try {
       onLog?.(
-        `chatComplete model=${model} temp=omit reason=${effort || "off"}`
+        `chatComplete model=${model} temp=omit reason=${effort || "off"} timeout=${effortTimeout}ms`
       );
       return await chatCompleteOnce({
         model,
@@ -381,17 +390,30 @@ export async function chatComplete({
         signal,
         temperature: null,
         reasoningEffort: effort,
-        timeoutMs,
-        onLog
+        timeoutMs: effortTimeout,
+        onLog,
+        // one network retry only — cascade handles effort drop
+        retries: effort === "high" ? 0 : 1
       });
     } catch (e) {
       lastErr = e;
       if (signal?.aborted) throw e;
-      if (shouldDropReasoningLevel(e) && effort) {
-        onLog?.(`reason=${effort} ditolak → turun cascade: ${String(e.message || e).slice(0, 120)}`);
+      const msg = String(e?.message || e || "");
+      const isTimeout = /timeout/i.test(msg);
+      if (shouldDropReasoningLevel(e) && effort && hasLower) {
+        onLog?.(`reason=${effort} ditolak → turun cascade: ${msg.slice(0, 120)}`);
         continue;
       }
-      if (effort && /400|422|unknown|unrecognized|parameter/i.test(String(e.message || e))) {
+      // CRITICAL: timeout on high must try medium/low/off (Writer pattern that works)
+      if (isTimeout && effort && hasLower) {
+        onLog?.(
+          `reason=${effort} timeout → coba effort lebih ringan (tiru agent yang work)`,
+          "warn"
+        );
+        continue;
+      }
+      if (effort && hasLower && /400|422|unknown|unrecognized|parameter|Failed to fetch/i.test(msg)) {
+        onLog?.(`reason=${effort} error → cascade: ${msg.slice(0, 100)}`, "warn");
         continue;
       }
       throw e;
