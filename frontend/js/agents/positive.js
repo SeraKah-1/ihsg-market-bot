@@ -13,7 +13,22 @@ export async function runPositive({ shortlistPack, research, signal, onLog }) {
     return await chatJson({
       model,
       system: positiveSystem() + "\nSchema:\n" + schema,
-      user: JSON.stringify({ shortlist: shortlistPack.shortlist, research, ihsg: shortlistPack.ihsg }, null, 2),
+      user: JSON.stringify(
+        {
+          marketRegime: shortlistPack.marketRegime,
+          ihsgContext: shortlistPack.ihsg?.context,
+          shortlist: (shortlistPack.shortlist || []).map((s) => ({
+            ticker: s.ticker,
+            metrics: s.metrics,
+            context: s.context,
+            vsIhsg: s.vsIhsg,
+            flowHints: s.flowHints
+          })),
+          research
+        },
+        null,
+        2
+      ),
       signal
     });
   } catch (e) {

@@ -121,3 +121,46 @@ export function modelFor(role) {
   const m = appSettings.models || {};
   return m[role] || m.judge || "gpt-4o-mini";
 }
+
+/**
+ * GET {endpoint}/models — OpenAI-compatible list.
+ * Returns sorted model ids (deduped).
+ */
+export async function fetchModels(signal = null) {
+  loadSettings();
+  const { endpoint, apiKey, useProxy } = resolveProviderCredentials();
+  let targetUrl = `${endpoint}/models`;
+  if (useProxy) targetUrl = getProxyUrl(targetUrl);
+
+  const res = await fetch(targetUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+      "HTTP-Referer": typeof location !== "undefined" ? location.href : "",
+      "X-Title": "IHSG Market Bot"
+    },
+    signal
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Models ${res.status}: ${t.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const list = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data)
+      ? data
+      : Array.isArray(data?.models)
+        ? data.models
+        : [];
+  const ids = [
+    ...new Set(
+      list
+        .map((m) => (typeof m === "string" ? m : m.id || m.name || m.model))
+        .filter(Boolean)
+        .map(String)
+    )
+  ].sort((a, b) => a.localeCompare(b));
+  return ids;
+}

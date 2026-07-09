@@ -32,6 +32,12 @@ export function renderBriefingHtml(b) {
         </div>
       </header>
       <dl class="kv">
+        <dt>Context</dt><dd class="muted">${esc(s.context?.summary || "—")}</dd>
+        <dt>vs IHSG</dt><dd>${esc(
+          s.vsIhsg
+            ? `1w ${signed(s.vsIhsg.excessRet1w)}% · 1m ${signed(s.vsIhsg.excessRet1m)}%`
+            : "—"
+        )}</dd>
         <dt>Why</dt><dd>${esc((s.whySelected || []).join(", ") || "—")}</dd>
         <dt>FOMO</dt><dd>${esc(st.fomoThesis || s.followMoney?.asymmetryNote || "—")}</dd>
         <dt>Invalidation</dt><dd>${esc(st.invalidation || "—")}</dd>
@@ -73,6 +79,9 @@ export function renderBriefingHtml(b) {
     })
     .join("");
 
+  const regime = b.marketRegime || {};
+  const ihsgSum = ihsg.context?.summary || regime.ihsgSummary || "";
+
   return `
   <header class="report-head">
     <p class="report-kicker">Market briefing</p>
@@ -80,10 +89,12 @@ export function renderBriefingHtml(b) {
     <div class="badges">
       <span class="badge badge-lean">Lean ${esc(lean)}</span>
       <span class="badge ${priority === "avoid_exit_liq" ? "badge-exit" : "badge-follow"}">${esc(priority)}</span>
+      <span class="badge badge-lean">Regime ${esc(regime.tag || "—")}</span>
       <span class="badge">${esc(b.searchMode || "")}</span>
       <span class="badge">${esc(b.sentiment?.confidenceLabel || "uncalibrated")}</span>
     </div>
-    <p class="meta">IHSG ${fmtNum(ihsg.close)} (${signed(ihsg.changePct)}%) · coverage ${fmt(b.dataQuality?.coveragePct)}% · ${esc(b.runId || "")}</p>
+    <p class="meta">IHSG ${fmtNum(ihsg.close)} (${signed(ihsg.changePct)}%) · ${esc(ihsgSum)}</p>
+    <p class="meta">coverage ${fmt(b.dataQuality?.coveragePct)}% · ${esc(b.runId || "")}${regime.note ? " · " + esc(regime.note) : ""}</p>
   </header>
 
   <details class="report-section" open>

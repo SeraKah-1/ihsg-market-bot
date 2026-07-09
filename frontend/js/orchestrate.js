@@ -191,32 +191,37 @@ function renderShortlistTable(pack) {
       const flowChip = s.flowHints?.flowAlive
         ? `<span class="chip chip-flow">flow</span>`
         : "";
+      const ctx = s.context?.summary || "";
       return `<tr>
       <td><span class="ticker">${esc(s.ticker)}</span></td>
       <td class="${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">${fmtSigned(s.metrics?.changePct)}%</td>
       <td>${fmt(s.metrics?.rvol)}</td>
-      <td>${fmt(s.metrics?.zRet)}</td>
+      <td class="ctx-cell" title="${esc(ctx)}">${esc(ctx || "—")}</td>
       <td>${(s.whySelected || []).map((w) => `<span class="chip">${esc(w)}</span>`).join("")}</td>
       <td><span class="chip ${riskClass}">${esc(risk)}</span>${flowChip}</td>
     </tr>`;
     })
     .join("");
 
+  const regime = pack.marketRegime;
   el.innerHTML = `
     <div class="meta-strip">
       <span>Day <b>${esc(pack.day)}</b></span>
+      <span>Regime <b>${esc(regime?.tag || "—")}</b></span>
+      <span>IHSG <b>${esc(regime?.ihsgSummary || pack.ihsg?.context?.summary || "—")}</b></span>
       <span>Breadth <b>${pack.breadth?.adv ?? "—"} / ${pack.breadth?.dec ?? "—"}</b></span>
       <span>Coverage <b>${fmt(pack.dataQuality?.coveragePct)}%</b></span>
       <span><b>${pack.dataQuality?.fromCache ? "cache" : "fresh"}</b></span>
     </div>
+    ${regime?.note ? `<div class="meta-strip"><span>${esc(regime.note)}</span></div>` : ""}
     <div class="table-wrap">
       <table class="data">
         <thead>
           <tr>
             <th scope="col">Ticker</th>
-            <th scope="col">%</th>
+            <th scope="col">1d%</th>
             <th scope="col">RVOL</th>
-            <th scope="col">Z</th>
+            <th scope="col">Context 1d/1w/1m</th>
             <th scope="col">Why</th>
             <th scope="col">Risk</th>
           </tr>

@@ -71,10 +71,37 @@ export async function runJudge({
   try {
     briefing = await chatJson({
       model,
-      system: judgeSystem() + "\nIsi SEMUA field penting. metrics shortlist SALIN dari input code (jangan ubah angka).\nSchema contoh:\n" + schema,
+      system:
+        judgeSystem() +
+        "\nIsi SEMUA field penting. metrics+context+marketRegime SALIN dari input (jangan ubah angka)." +
+        "\nWajib pakai marketRegime + ihsg.context untuk framing kondisi market." +
+        "\nPer ticker: pakai context.summary / slope / structure / vsIhsg — jangan spekulasi indikator di luar data." +
+        "\nSchema contoh:\n" +
+        schema,
       user: JSON.stringify(
         {
-          shortlistPack,
+          // pruned pack for token efficiency
+          day: shortlistPack.day,
+          marketRegime: shortlistPack.marketRegime,
+          ihsg: {
+            close: shortlistPack.ihsg?.close,
+            changePct: shortlistPack.ihsg?.changePct,
+            context: shortlistPack.ihsg?.context
+          },
+          breadth: shortlistPack.breadth,
+          globals: (shortlistPack.globals || []).map((g) => ({
+            label: g.label,
+            changePct: g.changePct,
+            contextSummary: g.context?.summary
+          })),
+          shortlist: (shortlistPack.shortlist || []).map((s) => ({
+            ticker: s.ticker,
+            whySelected: s.whySelected,
+            metrics: s.metrics,
+            context: s.context,
+            vsIhsg: s.vsIhsg,
+            flowHints: s.flowHints
+          })),
           research,
           fear,
           positive,
@@ -98,6 +125,7 @@ export async function runJudge({
   briefing.searchMode = searchMode;
   briefing.generatedAt = new Date().toISOString();
   briefing.dataQuality = shortlistPack.dataQuality;
+  briefing.marketRegime = shortlistPack.marketRegime;
   briefing.ihsg = shortlistPack.ihsg;
   briefing.globals = shortlistPack.globals;
   briefing.breadth = shortlistPack.breadth;
@@ -111,6 +139,8 @@ export async function runJudge({
     const src = byTicker[row.ticker] || shortlistPack.shortlist.find((s) => s.ticker === row.ticker);
     if (src) {
       row.metrics = src.metrics;
+      row.context = src.context;
+      row.vsIhsg = src.vsIhsg;
       row.whySelected = src.whySelected || row.whySelected;
       row.flowHints = src.flowHints;
     }

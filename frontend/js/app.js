@@ -1,6 +1,7 @@
 import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "./state.js";
 import { runPipeline, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
 import { injectReportStylesOnce } from "./render-report.js";
+import { fetchModels } from "./ai.js";
 
 const SHELL = () => document.querySelector(".shell");
 const THEME_KEY = "ihsg-theme";
@@ -128,6 +129,87 @@ function init() {
   initChrome();
 
   $("btn-save-settings")?.addEventListener("click", readSettingsFromForm);
+
+  $("btn-fetch-models")?.addEventListener("click", async () => {
+    readSettingsFromForm();
+    const st = $("models-status");
+    const btn = $("btn-fetch-models");
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = "Fetching /models…";
+    try {
+      const ids = await fetchModels();
+      const dl = $("model-list");
+      if (dl) {
+        dl.innerHTML = ids.map((id) => `<option value="${id.replace(/"/g, "&quot;")}"></option>`).join("");
+      }
+      // persist last list for convenience
+      try {
+        localStorage.setItem("ihsg-model-list", JSON.stringify(ids));
+      } catch {
+        /* */
+      }
+      if (st) st.textContent = `${ids.length} models · pilih dari dropdown input`;
+      logLine(`Fetched ${ids.length} models`);
+      setStatus(`${ids.length} models ready`, "ok");
+    } catch (e) {
+      if (st) st.textContent = "Gagal: " + e.message;
+      logLine("fetch models: " + e.message, "err");
+      setStatus("Fetch models gagal", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // hydrate model datalist from cache
+  try {
+    const cached = JSON.parse(localStorage.getItem("ihsg-model-list") || "[]");
+    if (Array.isArray(cached) && cached.length) {
+      const dl = $("model-list");
+      if (dl) {
+        dl.innerHTML = cached.map((id) => `<option value="${String(id).replace(/"/g, "&quot;")}"></option>`).join("");
+      }
+      const st = $("models-status");
+      if (st) st.textContent = `${cached.length} models (cache) · fetch ulang untuk update`;
+    }
+  } catch {
+    /* */
+  }
+
+  $("btn-fetch-tickers")?.addEventListener("click", async () => {
+    const st = $("tickers-status");
+    const btn = $("btn-fetch-tickers");
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = "Refreshing universe (validate Yahoo)…";
+    try {
+      const res = await fetch("/api/market/universe/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ validate: true, maxValidate: 0 })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (st) {
+        st.textContent = `${data.count} tickers · removed ${data.meta?.removedCount || 0} · ${data.refreshedAt || ""}`;
+      }
+      logLine(`Universe refresh: ${data.count} tickers, removed ${data.meta?.removedCount || 0}`);
+      setStatus(`Universe: ${data.count} emiten`, "ok");
+    } catch (e) {
+      if (st) st.textContent = "Gagal: " + e.message;
+      logLine("universe refresh: " + e.message, "err");
+      setStatus("Refresh tickers gagal", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // show current universe count
+  fetch("/api/market/universe")
+    .then((r) => r.json())
+    .then((u) => {
+      const st = $("tickers-status");
+      if (st) st.textContent = `${u.count || u.tickers?.length || "?"} tickers · updated ${u.updated || "?"}`;
+    })
+    .catch(() => {});
 
   const runFull = () =>
     withBusy(["btn-run", "btn-run-m", "btn-run-data", "btn-run-data-m"], async () => {

@@ -108,6 +108,18 @@ if (require.main === module) {
     }
   });
 
+  app.post("/api/market/universe/refresh", async (req, res) => {
+    try {
+      const validate = req.body?.validate !== false;
+      const maxValidate = req.body?.maxValidate != null ? parseInt(req.body.maxValidate, 10) : 0;
+      const result = await marketApi.refreshUniverse({ validate, maxValidate });
+      res.json(result);
+    } catch (e) {
+      console.error("[universe/refresh]", e);
+      res.status(500).json({ error: String(e.message || e) });
+    }
+  });
+
   app.get("/api/market/ohlcv", async (req, res) => {
     try {
       const day = req.query.day || marketApi.todayWIB();

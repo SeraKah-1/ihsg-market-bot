@@ -441,6 +441,15 @@ table.data tbody tr:hover td { background: var(--surface-hover); }
 table.data .ticker {
   font-weight: 600; color: var(--ink); font-family: var(--font-mono); font-size: 0.82rem;
 }
+table.data .ctx-cell {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .up { color: var(--up); }
 .down { color: var(--down); }

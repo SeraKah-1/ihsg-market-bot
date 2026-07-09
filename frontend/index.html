@@ -93,13 +93,41 @@
           </div>
         </details>
 
-        <details class="acc">
-          <summary class="acc-sum"><span>Models</span><span class="acc-hint">roles</span></summary>
+        <details class="acc" open>
+          <summary class="acc-sum"><span>Models</span><span class="acc-hint">GET /models</span></summary>
           <div class="acc-body">
-            <label class="field"><span class="field-label">Research</span><input id="model-research" type="text" spellcheck="false" /></label>
-            <label class="field"><span class="field-label">Fear</span><input id="model-fear" type="text" spellcheck="false" /></label>
-            <label class="field"><span class="field-label">Positive</span><input id="model-positive" type="text" spellcheck="false" /></label>
-            <label class="field"><span class="field-label">Judge</span><input id="model-judge" type="text" spellcheck="false" /></label>
+            <button type="button" class="btn btn-secondary btn-block" id="btn-fetch-models" title="Fetch dari {endpoint}/models">
+              Fetch models
+            </button>
+            <p id="models-status" class="fineprint" style="margin-top:0.4rem;text-align:left">Belum di-fetch</p>
+            <label class="field">
+              <span class="field-label">Research</span>
+              <input id="model-research" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">Fear</span>
+              <input id="model-fear" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">Positive</span>
+              <input id="model-positive" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">Judge</span>
+              <input id="model-judge" type="text" list="model-list" spellcheck="false" autocomplete="off" />
+            </label>
+            <datalist id="model-list"></datalist>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary class="acc-sum"><span>Universe</span><span class="acc-hint">tickers</span></summary>
+          <div class="acc-body">
+            <p class="fineprint" style="text-align:left;margin:0 0 0.5rem">Refresh emiten (seed + validasi Yahoo). Bukan feed resmi IDX.</p>
+            <button type="button" class="btn btn-secondary btn-block" id="btn-fetch-tickers">
+              Fetch / refresh tickers
+            </button>
+            <p id="tickers-status" class="fineprint" style="margin-top:0.4rem;text-align:left">—</p>
           </div>
         </details>
 
