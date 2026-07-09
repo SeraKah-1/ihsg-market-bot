@@ -1,7 +1,23 @@
 import { loadSettings, saveSettings, appSettings, $, logLine, setStatus } from "./state.js";
 import { runPipeline, abortRun, downloadHtml, downloadJson } from "./orchestrate.js";
+import { injectReportStylesOnce } from "./render-report.js";
 
 const SHELL = () => document.querySelector(".shell");
+const THEME_KEY = "ihsg-theme";
+
+function applyTheme(mode) {
+  const m = mode || localStorage.getItem(THEME_KEY) || "system";
+  localStorage.setItem(THEME_KEY, m);
+  document.documentElement.dataset.theme = m;
+  const dark =
+    m === "dark" || (m === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.classList.toggle("dark-mode", dark);
+  document.querySelectorAll("[data-theme-set]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.getAttribute("data-theme-set") === m ? "true" : "false");
+  });
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", dark ? "#1c1917" : "#f3efe6");
+}
 
 function bindSettingsForm() {
   loadSettings();
@@ -44,9 +60,7 @@ function setNavOpen(open) {
   const shell = SHELL();
   if (!shell) return;
   shell.classList.toggle("nav-collapsed", !open);
-  const btn = $("btn-toggle-nav");
-  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
-  // desktop default open; mobile start collapsed handled on resize
+  $("btn-toggle-nav")?.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function setLogOpen(open) {
@@ -54,13 +68,8 @@ function setLogOpen(open) {
   const drawer = $("log-drawer");
   if (!shell || !drawer) return;
   shell.classList.toggle("log-open", open);
-  if (open) {
-    drawer.hidden = false;
-  } else {
-    drawer.hidden = true;
-  }
-  const btn = $("btn-toggle-log");
-  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  drawer.hidden = !open;
+  $("btn-toggle-log")?.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function isMobile() {
@@ -78,48 +87,43 @@ async function withBusy(btnIds, fn) {
 }
 
 function initChrome() {
-  // default: nav open on desktop, collapsed on mobile
+  applyTheme(localStorage.getItem(THEME_KEY) || "system");
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if ((localStorage.getItem(THEME_KEY) || "system") === "system") applyTheme("system");
+  });
+  document.querySelectorAll("[data-theme-set]").forEach((btn) => {
+    btn.addEventListener("click", () => applyTheme(btn.getAttribute("data-theme-set")));
+  });
+
   setNavOpen(!isMobile());
   setLogOpen(false);
 
   $("btn-toggle-nav")?.addEventListener("click", () => {
-    const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
-    setNavOpen(open);
+    setNavOpen($("btn-toggle-nav").getAttribute("aria-expanded") !== "true");
   });
   $("btn-toggle-nav-m")?.addEventListener("click", () => {
-    const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
-    setNavOpen(open);
+    setNavOpen($("btn-toggle-nav").getAttribute("aria-expanded") !== "true");
   });
-
   $("btn-toggle-log")?.addEventListener("click", () => {
-    const open = $("btn-toggle-log").getAttribute("aria-expanded") !== "true";
-    setLogOpen(open);
+    setLogOpen($("btn-toggle-log").getAttribute("aria-expanded") !== "true");
   });
   $("btn-close-log")?.addEventListener("click", () => setLogOpen(false));
 
-  window.addEventListener("resize", () => {
-    if (!isMobile()) {
-      // keep desktop usable
-      if (SHELL()?.classList.contains("nav-collapsed") === false) return;
-    }
-  });
-
-  // keyboard: Escape closes drawers
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if ($("btn-toggle-log")?.getAttribute("aria-expanded") === "true") setLogOpen(false);
-      else if (isMobile() && $("btn-toggle-nav")?.getAttribute("aria-expanded") === "true") setNavOpen(false);
+      else if (isMobile() && $("btn-toggle-nav")?.getAttribute("aria-expanded") === "true")
+        setNavOpen(false);
     }
-    // Ctrl+\ toggle nav
     if (e.key === "\\" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      const open = $("btn-toggle-nav").getAttribute("aria-expanded") !== "true";
-      setNavOpen(open);
+      setNavOpen($("btn-toggle-nav").getAttribute("aria-expanded") !== "true");
     }
   });
 }
 
 function init() {
+  injectReportStylesOnce();
   bindSettingsForm();
   initChrome();
 

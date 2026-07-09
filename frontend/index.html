@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-theme="system">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#f3efe6" />
   <title>IHSG Market · Briefing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -14,20 +14,33 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
   <script type="module">
     import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+    const dark = document.documentElement.classList.contains("dark-mode");
+    mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "loose" });
     window.mermaid = mermaid;
+  </script>
+  <script>
+    // Prevent FOUC: apply theme before paint
+    (function () {
+      try {
+        var t = localStorage.getItem("ihsg-theme") || "system";
+        var dark =
+          t === "dark" ||
+          (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark-mode", dark);
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
   </script>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Loncat ke konten</a>
 
-  <!-- Top bar: primary chrome (xAI/Anthropic-like restraint) -->
   <header class="topbar" role="banner">
     <div class="topbar-left">
-      <button type="button" class="icon-btn" id="btn-toggle-nav" aria-expanded="true" aria-controls="side-nav" title="Toggle settings (⌘\)">
-        <span class="icon" aria-hidden="true">☰</span>
-        <span class="sr-only">Toggle panel settings</span>
+      <button type="button" class="icon-btn" id="btn-toggle-nav" aria-expanded="true" aria-controls="side-nav" title="Settings (Ctrl+\\)">
+        <span aria-hidden="true">☰</span>
+        <span class="sr-only">Toggle settings</span>
       </button>
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
@@ -43,37 +56,27 @@
     </div>
 
     <div class="topbar-actions" role="toolbar" aria-label="Aksi utama">
-      <button type="button" class="btn btn-ghost" id="btn-run-data" title="Ingest + shortlist tanpa AI">
-        Data only
-      </button>
-      <button type="button" class="btn btn-primary" id="btn-run" title="Full briefing pipeline">
-        Run briefing
-      </button>
-      <button type="button" class="btn btn-danger-ghost" id="btn-abort" title="Batalkan run" aria-label="Abort">
-        Abort
-      </button>
+      <button type="button" class="btn btn-ghost" id="btn-run-data">Data only</button>
+      <button type="button" class="btn btn-primary" id="btn-run">Run briefing</button>
+      <button type="button" class="btn btn-danger-ghost" id="btn-abort" aria-label="Abort">Abort</button>
       <div class="divider-v" aria-hidden="true"></div>
-      <button type="button" class="btn btn-ghost" id="btn-dl-json" title="Export JSON">JSON</button>
-      <button type="button" class="btn btn-ghost" id="btn-dl-html" title="Export HTML">HTML</button>
+      <button type="button" class="btn btn-ghost" id="btn-dl-json">JSON</button>
+      <button type="button" class="btn btn-ghost" id="btn-dl-html">HTML</button>
       <button type="button" class="icon-btn" id="btn-toggle-log" aria-expanded="false" aria-controls="log-drawer" title="Activity log">
-        <span class="icon" aria-hidden="true">⌘</span>
+        <span aria-hidden="true">⌘</span>
         <span class="sr-only">Toggle log</span>
       </button>
     </div>
   </header>
 
   <div class="shell">
-    <!-- Settings: progressive disclosure -->
     <aside id="side-nav" class="side-nav" aria-label="Settings">
       <div class="side-nav-scroll">
         <p class="side-kicker">Stance</p>
         <p class="side-blurb">Follow the money · FOMO boleh · anti exit-liquidity · data dulu</p>
 
         <details class="acc" open>
-          <summary class="acc-sum">
-            <span>Router</span>
-            <span class="acc-hint">custom endpoint</span>
-          </summary>
+          <summary class="acc-sum"><span>Router</span><span class="acc-hint">endpoint</span></summary>
           <div class="acc-body">
             <label class="field">
               <span class="field-label">Endpoint</span>
@@ -91,10 +94,7 @@
         </details>
 
         <details class="acc">
-          <summary class="acc-sum">
-            <span>Models</span>
-            <span class="acc-hint">per role</span>
-          </summary>
+          <summary class="acc-sum"><span>Models</span><span class="acc-hint">roles</span></summary>
           <div class="acc-body">
             <label class="field"><span class="field-label">Research</span><input id="model-research" type="text" spellcheck="false" /></label>
             <label class="field"><span class="field-label">Fear</span><input id="model-fear" type="text" spellcheck="false" /></label>
@@ -104,10 +104,7 @@
         </details>
 
         <details class="acc" open>
-          <summary class="acc-sum">
-            <span>Run options</span>
-            <span class="acc-hint">perf</span>
-          </summary>
+          <summary class="acc-sum"><span>Run options</span><span class="acc-hint">perf</span></summary>
           <div class="acc-body">
             <div class="field-grid">
               <label class="field">
@@ -116,13 +113,13 @@
               </label>
               <label class="field">
                 <span class="field-label">Max ingest</span>
-                <input id="max-ingest" type="number" min="0" value="0" title="0 = all · 40–80 smoke cepat" />
+                <input id="max-ingest" type="number" min="0" value="0" title="0 = all · 40–80 smoke" />
               </label>
             </div>
             <label class="field">
               <span class="field-label">Search mode</span>
               <select id="search-mode">
-                <option value="auto">Auto (fallback news)</option>
+                <option value="auto">Auto (news fallback)</option>
                 <option value="FALLBACK">FALLBACK</option>
                 <option value="DEGRADED">DEGRADED — no search</option>
                 <option value="FULL">FULL — native if available</option>
@@ -137,14 +134,17 @@
 
         <div class="side-footer">
           <button type="button" class="btn btn-secondary btn-block" id="btn-save-settings">Save settings</button>
-          <p class="fineprint">Local-first · free data · personal use</p>
+          <div class="theme-toggle" role="group" aria-label="Theme">
+            <button type="button" data-theme-set="light" id="theme-light">Light</button>
+            <button type="button" data-theme-set="dark" id="theme-dark">Dark</button>
+            <button type="button" data-theme-set="system" id="theme-system">System</button>
+          </div>
+          <p class="fineprint">Warm neutrals · WCAG-minded · not pure black</p>
         </div>
       </div>
     </aside>
 
-    <!-- Main canvas -->
     <main id="main-content" class="main" tabindex="-1">
-      <!-- KPI strip: summary tier -->
       <section class="kpi-strip" id="kpi-strip" aria-label="Ringkasan pasar">
         <article class="kpi empty">
           <span class="kpi-label">IHSG</span>
@@ -168,42 +168,39 @@
         </article>
       </section>
 
-      <!-- Shortlist: context tier -->
       <section class="block" aria-labelledby="h-shortlist">
         <header class="block-head">
           <div>
             <p class="eyebrow">Screen</p>
             <h2 id="h-shortlist">Shortlist</h2>
           </div>
-          <p class="block-desc">Code-ranked needles · AI hanya di sini</p>
+          <p class="block-desc">Code-ranked · AI only on these picks</p>
         </header>
         <div id="shortlist-table" class="surface">
           <div class="empty-state">
             <p class="empty-title">Belum ada tape</p>
-            <p class="empty-body">Tekan <kbd>Data only</kbd> untuk ingest, atau <kbd>Run briefing</kbd> untuk full pipeline.</p>
+            <p class="empty-body">Tekan <kbd>Data only</kbd> atau <kbd>Run briefing</kbd>.</p>
           </div>
         </div>
       </section>
 
-      <!-- Report: detail tier -->
       <section class="block" aria-labelledby="h-report">
         <header class="block-head">
           <div>
             <p class="eyebrow">Analysis</p>
             <h2 id="h-report">Briefing</h2>
           </div>
-          <p class="block-desc">JSON → HTML · collapsible sections</p>
+          <p class="block-desc">Injected HTML · collapsible · export-ready</p>
         </header>
         <div id="report-view" class="report surface">
           <div class="empty-state">
             <p class="empty-title">Belum ada laporan</p>
-            <p class="empty-body">Judge output muncul di sini. Export JSON/HTML dari top bar.</p>
+            <p class="empty-body">Judge output muncul di sini. Export dari top bar.</p>
           </div>
         </div>
       </section>
     </main>
 
-    <!-- Log drawer -->
     <aside id="log-drawer" class="log-drawer" aria-label="Activity log" hidden>
       <header class="log-head">
         <h2>Activity</h2>
@@ -213,7 +210,6 @@
     </aside>
   </div>
 
-  <!-- Mobile bottom bar -->
   <nav class="mobile-bar" aria-label="Aksi mobile">
     <button type="button" class="btn btn-ghost" id="btn-run-data-m">Data</button>
     <button type="button" class="btn btn-primary" id="btn-run-m">Run</button>

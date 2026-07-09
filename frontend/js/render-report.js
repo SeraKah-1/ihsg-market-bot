@@ -1,22 +1,25 @@
 /**
- * JSON → HTML report with progressive disclosure (collapsible sections).
- * Scan-first: header badges → accordions → cards.
+ * JSON → HTML briefing. Shared structure for in-app + export.
  */
+import { REPORT_CSS, wrapStandaloneHtml } from "./report-theme.js";
+
 export function renderBriefingHtml(b) {
-  if (!b) return empty("Empty briefing");
+  if (!b) {
+    return `<div class="empty-state"><p class="empty-title">Empty briefing</p></div>`;
+  }
+
+  updateKpisFromBriefing(b);
 
   const lean = b.sentiment?.judgeLean || "—";
   const priority = b.sentiment?.judgePriority || "mixed";
   const ihsg = b.ihsg || {};
-
-  // update KPI if present
-  updateKpisFromBriefing(b);
 
   const cards = (b.shortlist || [])
     .map((s) => {
       const st = s.stance || {};
       const risk = st.exitLiquidityRisk || "low";
       const agg = st.aggressionAllowed;
+      const chg = s.metrics?.changePct;
       return `<article class="card">
       <header>
         <h3>
@@ -24,19 +27,34 @@ export function renderBriefingHtml(b) {
           <span class="badge ${agg ? "badge-follow" : "badge-exit"}">${agg ? "Follow money" : "No aggression"}</span>
           <span class="badge badge-exit">Exit-liq ${esc(risk)}</span>
         </h3>
-        <div class="metrics-line ${(s.metrics?.changePct || 0) >= 0 ? "up" : "down"}">
-          ${fmt(s.metrics?.changePct)}% · rvol ${fmt(s.metrics?.rvol)} · z ${fmt(s.metrics?.zRet)}
+        <div class="metrics-line ${chg >= 0 ? "up" : "down"}">
+          ${signed(chg)}% · rvol ${fmt(s.metrics?.rvol)} · z ${fmt(s.metrics?.zRet)}
         </div>
       </header>
-      <p><b>Why</b> — ${esc((s.whySelected || []).join(", ") || "—")}</p>
-      <p><b>FOMO thesis</b> — ${esc(st.fomoThesis || s.followMoney?.asymmetryNote || "—")}</p>
-      <p><b>Invalidation</b> — ${esc(st.invalidation || "—")}</p>
-      <p><b>Horizon</b> — ${esc(st.timeHorizon || "—")}</p>
-      <p><b>Best move</b> — ${esc(s.bestMoveFraming || "—")}</p>
-      <p><b>Base</b> — ${esc(s.scenarios?.base?.narrative || "—")}
-         <span class="muted">(p=${fmt(s.scenarios?.base?.prob)})</span></p>
-      <p class="muted"><b>Bull</b> ${esc(s.scenarios?.bull?.narrative || "—")} ·
-         <b>Bear</b> ${esc(s.scenarios?.bear?.narrative || "—")}</p>
+      <dl class="kv">
+        <dt>Why</dt><dd>${esc((s.whySelected || []).join(", ") || "—")}</dd>
+        <dt>FOMO</dt><dd>${esc(st.fomoThesis || s.followMoney?.asymmetryNote || "—")}</dd>
+        <dt>Invalidation</dt><dd>${esc(st.invalidation || "—")}</dd>
+        <dt>Horizon</dt><dd>${esc(st.timeHorizon || "—")}</dd>
+        <dt>Best move</dt><dd>${esc(s.bestMoveFraming || "—")}</dd>
+      </dl>
+      <div class="scenario-row">
+        <div class="scenario">
+          <div class="lab">Base</div>
+          <div>${esc(s.scenarios?.base?.narrative || "—")}</div>
+          <div class="prob">p=${fmt(s.scenarios?.base?.prob)} · ${esc(s.scenarios?.base?.horizon || "")}</div>
+        </div>
+        <div class="scenario">
+          <div class="lab">Bull</div>
+          <div>${esc(s.scenarios?.bull?.narrative || "—")}</div>
+          <div class="prob">p=${fmt(s.scenarios?.bull?.prob)}</div>
+        </div>
+        <div class="scenario">
+          <div class="lab">Bear</div>
+          <div>${esc(s.scenarios?.bear?.narrative || "—")}</div>
+          <div class="prob">p=${fmt(s.scenarios?.bear?.prob)}</div>
+        </div>
+      </div>
     </article>`;
     })
     .join("");
@@ -46,22 +64,26 @@ export function renderBriefingHtml(b) {
     : `<p class="muted">Tidak ada diagram.</p>`;
 
   const globalsRows = (b.globals || [])
-    .map(
-      (g) =>
-        `<tr><td>${esc(g.label || g.symbol)}</td><td class="${(g.changePct || 0) >= 0 ? "up" : "down"}">${fmt(g.changePct)}%</td></tr>`
-    )
+    .map((g) => {
+      const c = g.changePct;
+      return `<tr>
+        <td>${esc(g.label || g.symbol)}</td>
+        <td class="${c >= 0 ? "up" : "down"}">${signed(c)}%</td>
+      </tr>`;
+    })
     .join("");
 
   return `
   <header class="report-head">
-    <h1>IHSG Briefing · ${esc(b.asOfSession || "")}</h1>
+    <p class="report-kicker">Market briefing</p>
+    <h1>IHSG · ${esc(b.asOfSession || "")}</h1>
     <div class="badges">
       <span class="badge badge-lean">Lean ${esc(lean)}</span>
       <span class="badge ${priority === "avoid_exit_liq" ? "badge-exit" : "badge-follow"}">${esc(priority)}</span>
       <span class="badge">${esc(b.searchMode || "")}</span>
       <span class="badge">${esc(b.sentiment?.confidenceLabel || "uncalibrated")}</span>
     </div>
-    <p class="meta">IHSG ${fmt(ihsg.close)} (${signed(ihsg.changePct)}%) · coverage ${fmt(b.dataQuality?.coveragePct)}% · ${esc(b.runId || "")}</p>
+    <p class="meta">IHSG ${fmtNum(ihsg.close)} (${signed(ihsg.changePct)}%) · coverage ${fmt(b.dataQuality?.coveragePct)}% · ${esc(b.runId || "")}</p>
   </header>
 
   <details class="report-section" open>
@@ -76,18 +98,20 @@ export function renderBriefingHtml(b) {
   <details class="report-section" open>
     <summary>Market-wide</summary>
     <div class="report-section-body">
-      <p><b>Regime</b> — ${esc(b.marketWide?.regimeTag || "—")}</p>
-      <p><b>Themes</b> — ${esc((b.marketWide?.themes || []).join(", ") || "—")}</p>
-      <p><b>Follow money</b> — ${esc(b.marketWide?.followMoneyThesis || "—")}</p>
-      <p><b>Best move</b> — ${esc(b.marketWide?.bestMoveOverall || "—")}</p>
-      <p><b>Unexplained</b> — ${esc((b.marketWide?.unexplained || []).join("; ") || "—")}</p>
+      <dl class="kv">
+        <dt>Regime</dt><dd>${esc(b.marketWide?.regimeTag || "—")}</dd>
+        <dt>Themes</dt><dd>${esc((b.marketWide?.themes || []).join(", ") || "—")}</dd>
+        <dt>Follow money</dt><dd>${esc(b.marketWide?.followMoneyThesis || "—")}</dd>
+        <dt>Best move</dt><dd>${esc(b.marketWide?.bestMoveOverall || "—")}</dd>
+        <dt>Unexplained</dt><dd>${esc((b.marketWide?.unexplained || []).join("; ") || "—")}</dd>
+      </dl>
     </div>
   </details>
 
   <details class="report-section">
     <summary>Globals</summary>
     <div class="report-section-body">
-      <table>
+      <table class="report-table">
         <thead><tr><th>Symbol</th><th>Change</th></tr></thead>
         <tbody>${globalsRows || "<tr><td colspan='2' class='muted'>—</td></tr>"}</tbody>
       </table>
@@ -106,10 +130,28 @@ export function renderBriefingHtml(b) {
     <div class="report-section-body">${mermaid}</div>
   </details>
 
-  <footer>
-    <p>${esc(b.disclaimer || "Bukan saran investasi.")}</p>
+  <footer class="report-footer">
+    <p>${esc(b.disclaimer || "Bukan saran investasi. Keputusan akhir di user.")}</p>
     <p>Stance: follow the money · FOMO boleh · jangan exit liquidity · no AI loss-aversion</p>
   </footer>`;
+}
+
+/** Full document for download */
+export function buildExportHtml(b) {
+  const body = renderBriefingHtml(b);
+  return wrapStandaloneHtml({
+    title: `IHSG Briefing ${b?.asOfSession || ""}`.trim(),
+    bodyHtml: body,
+    reportJson: b
+  });
+}
+
+export function injectReportStylesOnce() {
+  if (document.getElementById("report-theme-css")) return;
+  const style = document.createElement("style");
+  style.id = "report-theme-css";
+  style.textContent = REPORT_CSS;
+  document.head.appendChild(style);
 }
 
 export function updateKpisFromBriefing(b) {
@@ -126,35 +168,26 @@ export function updateKpisFromBriefing(b) {
 
 export function updateKpisFromShortlist(pack) {
   const ihsg = pack.ihsg || {};
-  const set = (id, text, cls) => {
+  const setText = (id, text) => {
     const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = text;
-    if (cls !== undefined) {
-      el.classList.remove("up", "down");
-      if (cls) el.classList.add(cls);
-    }
+    if (el) el.textContent = text;
   };
-  const chg = ihsg.changePct;
-  set("kpi-ihsg", ihsg.close != null ? fmtNum(ihsg.close) : "—");
+  setText("kpi-ihsg", ihsg.close != null ? fmtNum(ihsg.close) : "—");
   const chgEl = document.getElementById("kpi-ihsg-chg");
   if (chgEl) {
+    const chg = ihsg.changePct;
     chgEl.textContent = chg == null ? "—" : `${signed(chg)}%`;
     chgEl.className = "kpi-meta " + (chg > 0 ? "up" : chg < 0 ? "down" : "");
   }
   const b = pack.breadth || {};
-  set("kpi-breadth", b.total != null ? `${b.adv ?? 0}/${b.dec ?? 0}` : "—");
-  set("kpi-cov", pack.dataQuality?.coveragePct != null ? `${fmtNum(pack.dataQuality.coveragePct)}%` : "—");
+  setText("kpi-breadth", b.total != null ? `${b.adv ?? 0} / ${b.dec ?? 0}` : "—");
+  setText(
+    "kpi-cov",
+    pack.dataQuality?.coveragePct != null ? `${fmt(pack.dataQuality.coveragePct)}%` : "—"
+  );
   const cacheEl = document.getElementById("kpi-cache");
-  if (cacheEl) {
-    cacheEl.textContent = pack.dataQuality?.fromCache ? "cache hit" : "fresh fetch";
-  }
-  // clear empty state styling
+  if (cacheEl) cacheEl.textContent = pack.dataQuality?.fromCache ? "cache hit" : "fresh fetch";
   document.querySelectorAll(".kpi-strip .kpi").forEach((k) => k.classList.remove("empty"));
-}
-
-function empty(msg) {
-  return `<div class="empty-state"><p class="empty-title">${esc(msg)}</p></div>`;
 }
 
 function fmt(n) {
@@ -164,7 +197,7 @@ function fmt(n) {
 function fmtNum(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
   const x = Number(n);
-  if (Math.abs(x) >= 1000) return x.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+  if (Math.abs(x) >= 100) return x.toLocaleString("id-ID", { maximumFractionDigits: 2 });
   return String(Math.round(x * 100) / 100);
 }
 function signed(n) {
